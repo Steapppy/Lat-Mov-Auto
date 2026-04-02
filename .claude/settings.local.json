@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet build:*)",
+      "Bash(python -c \"from database import init_db, get_conn; from main import app; print\\(''OK''\\)\")",
+      "Bash(py --version)",
+      "Bash(where python:*)",
+      "Bash(py:*)"
+    ]
+  }
+}

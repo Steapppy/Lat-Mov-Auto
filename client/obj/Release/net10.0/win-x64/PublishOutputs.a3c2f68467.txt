@@ -1,0 +1,2 @@
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\publish\client.pdb
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\publish\client.exe

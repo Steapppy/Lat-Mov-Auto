@@ -1,0 +1,14 @@
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Debug\net10.0\client.exe
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Debug\net10.0\client.deps.json
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Debug\net10.0\client.runtimeconfig.json
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Debug\net10.0\client.dll
+C:\Users\mspc\Lat-Mov-Auto\client\bin\Debug\net10.0\client.pdb
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.AssemblyInfoInputs.cache
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.AssemblyInfo.cs
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.csproj.CoreCompileInputs.cache
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.dll
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\refint\client.dll
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.pdb
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\client.genruntimeconfig.cache
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Debug\net10.0\ref\client.dll
