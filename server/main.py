@@ -6,7 +6,7 @@ import json
 import os
 from database import init_db, migrate_db, ensure_server_agent, get_conn
 from impacket_wrapper import wmi_exec, smb_exec
-from pivot_manager import start_proxy, stop_proxy, proxy_status, add_route, del_route
+from pivot_manager import ensure_interface, add_route, del_route
 
 app = FastAPI()
 
@@ -58,11 +58,6 @@ class ExecRequest(BaseModel):
     username: Optional[str] = None  # … or supply inline
     secret: Optional[str] = None
     cred_type: str = "plaintext"    # "plaintext" or "ntlm"
-
-class ProxyStartRequest(BaseModel):
-    interface:   str = "ligolo"
-    listen_port: int = 11601
-    proxy_bin:   str = "ligolo-ng-proxy"   # path or name of the binary
 
 class TunnelRegister(BaseModel):
     agent_id:  str
@@ -283,25 +278,6 @@ def remote_exec(data: ExecRequest):
 
 # ── Pivot endpoints ───────────────────────────────────────────────────────────
 
-@app.post("/pivot/proxy/start")
-def pivot_proxy_start(data: ProxyStartRequest):
-    result = start_proxy(data.interface, data.listen_port, data.proxy_bin)
-    print(f"[*] Pivot proxy: {result}")
-    return result
-
-
-@app.post("/pivot/proxy/stop")
-def pivot_proxy_stop(data: ProxyStartRequest):
-    result = stop_proxy(data.interface)
-    print(f"[*] Pivot proxy stopped")
-    return result
-
-
-@app.get("/pivot/proxy/status")
-def pivot_proxy_status():
-    return proxy_status()
-
-
 @app.post("/pivot/tunnel")
 def register_tunnel(data: TunnelRegister):
     """
@@ -315,6 +291,12 @@ def register_tunnel(data: TunnelRegister):
         ).fetchone()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
+
+    iface = ensure_interface(data.interface)
+    if not iface["ok"]:
+        raise HTTPException(status_code=500, detail=f"Failed to create interface: {iface['error']}")
+    if iface["created"]:
+        print(f"[*] TUN interface '{data.interface}' created")
 
     route = add_route(data.subnet, data.interface)
     if not route["ok"]:

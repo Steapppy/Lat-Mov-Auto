@@ -200,3 +200,4 @@ C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\refint\client.dll
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.pdb
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.genruntimeconfig.cache
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\ref\client.dll
+C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.sourcelink.json
