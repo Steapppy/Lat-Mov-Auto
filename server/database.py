@@ -32,7 +32,7 @@ def migrate_db():
         if "services" not in host_cols:
             conn.execute("ALTER TABLE hosts ADD COLUMN services TEXT DEFAULT '[]'")
 
-        # tunnels table was added after initial release
+        # tunnels / attack_paths tables added after initial release
         tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         if "tunnels" not in tables:
             conn.execute("""
@@ -44,6 +44,19 @@ def migrate_db():
                     status      TEXT NOT NULL DEFAULT 'active',
                     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                     FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+                )
+            """)
+        if "attack_paths" not in tables:
+            conn.execute("""
+                CREATE TABLE attack_paths (
+                    path_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                    start_node  TEXT NOT NULL,
+                    end_node    TEXT NOT NULL,
+                    path_json   TEXT NOT NULL,
+                    length      INTEGER NOT NULL,
+                    status      TEXT NOT NULL DEFAULT 'planned',
+                    notes       TEXT DEFAULT '',
+                    saved_at    TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
 
@@ -109,5 +122,16 @@ def init_db():
                 status      TEXT NOT NULL DEFAULT 'active',
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 FOREIGN KEY (agent_id) REFERENCES agents(agent_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS attack_paths (
+                path_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                start_node  TEXT NOT NULL,
+                end_node    TEXT NOT NULL,
+                path_json   TEXT NOT NULL,
+                length      INTEGER NOT NULL,
+                status      TEXT NOT NULL DEFAULT 'planned',
+                notes       TEXT DEFAULT '',
+                saved_at    TEXT NOT NULL DEFAULT (datetime('now'))
             );
         """)

@@ -7,6 +7,7 @@ import os
 from database import init_db, migrate_db, ensure_server_agent, get_conn
 from impacket_wrapper import wmi_exec, smb_exec
 from pivot_manager import ensure_interface, add_route, del_route
+import bloodhound_client as bh
 
 app = FastAPI()
 
@@ -344,6 +345,141 @@ def list_tunnels():
             "SELECT * FROM tunnels ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── BloodHound / Neo4j endpoints ──────────────────────────────────────────────
+
+class CypherQuery(BaseModel):
+    cypher: str
+    params: dict = {}
+
+class AttackPathSave(BaseModel):
+    start_node: str
+    end_node:   str
+    path_json:  str   # JSON-serialized steps list
+    length:     int
+
+class AttackPathUpdate(BaseModel):
+    status: str        # planned / in_progress / completed / failed
+    notes:  str = ""
+
+
+@app.get("/bloodhound/status")
+def bloodhound_status():
+    return bh.check_connection()
+
+
+@app.post("/bloodhound/query")
+def bloodhound_query(data: CypherQuery):
+    """Run arbitrary Cypher against Neo4j. Primary interface for the AI decision engine."""
+    try:
+        results = bh.run_query(data.cypher, data.params)
+        return {"results": results, "count": len(results)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bloodhound/da-paths")
+def bloodhound_da_paths(username: str, domain: str = "ICCN.LOCAL"):
+    """Shortest paths from a node to Domain Admins."""
+    try:
+        paths = bh.get_da_paths(username, domain)
+        return {"username": username, "domain": domain, "paths": paths, "count": len(paths)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bloodhound/owned-paths")
+def bloodhound_owned_paths(domain: str = "ICCN.LOCAL"):
+    """Shortest paths to DA from all nodes currently in the credentials table."""
+    with get_conn() as conn:
+        rows = conn.execute("SELECT DISTINCT username FROM credentials").fetchall()
+    owned = [r["username"] for r in rows]
+    if not owned:
+        return {"paths": [], "count": 0}
+    try:
+        paths = bh.get_owned_paths(owned, domain)
+        return {"owned_nodes": owned, "domain": domain, "paths": paths, "count": len(paths)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bloodhound/admins")
+def bloodhound_admin_targets(username: str):
+    """Computers where username has AdminTo rights."""
+    try:
+        return {"username": username, "admin_targets": bh.get_admin_targets(username)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bloodhound/sessions")
+def bloodhound_sessions(computer: str):
+    """Users with active sessions on a computer."""
+    try:
+        return {"computer": computer, "sessions": bh.get_sessions(computer)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bloodhound/kerberoastable")
+def bloodhound_kerberoastable(domain: str = "ICCN.LOCAL"):
+    try:
+        return {"domain": domain, "accounts": bh.get_kerberoastable(domain)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/bloodhound/asreproastable")
+def bloodhound_asreproastable(domain: str = "ICCN.LOCAL"):
+    try:
+        return {"domain": domain, "accounts": bh.get_asreproastable(domain)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Attack path working memory (AI state) ─────────────────────────────────────
+
+@app.post("/attack_paths")
+def save_attack_path(data: AttackPathSave):
+    """AI stores a path it has decided to pursue."""
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO attack_paths (start_node, end_node, path_json, length) VALUES (?, ?, ?, ?)",
+            (data.start_node, data.end_node, data.path_json, data.length)
+        )
+    return {"path_id": cur.lastrowid, "status": "planned"}
+
+
+@app.get("/attack_paths")
+def list_attack_paths(status: Optional[str] = None):
+    """Read stored attack paths. Filter by status if provided."""
+    with get_conn() as conn:
+        if status:
+            rows = conn.execute(
+                "SELECT * FROM attack_paths WHERE status = ? ORDER BY saved_at DESC", (status,)
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM attack_paths ORDER BY saved_at DESC"
+            ).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.patch("/attack_paths/{path_id}")
+def update_attack_path(path_id: int, data: AttackPathUpdate):
+    """AI updates the status of a path it is executing (planned→in_progress→completed/failed)."""
+    valid = {"planned", "in_progress", "completed", "failed"}
+    if data.status not in valid:
+        raise HTTPException(status_code=400, detail=f"status must be one of {valid}")
+    with get_conn() as conn:
+        updated = conn.execute(
+            "UPDATE attack_paths SET status = ?, notes = ? WHERE path_id = ?",
+            (data.status, data.notes, path_id)
+        ).rowcount
+    if not updated:
+        raise HTTPException(status_code=404, detail="Path not found")
+    return {"path_id": path_id, "status": data.status}
 
 
 if __name__ == "__main__":
