@@ -121,6 +121,31 @@ def get_asreproastable(domain: str) -> list[dict]:
     return run_query(cypher, {"domain": domain.upper()})
 
 
+def sync_all() -> dict:
+    """
+    Dump every node and every relationship from Neo4j as plain Python dicts.
+    Called by POST /bloodhound/sync — results are stored in bh_nodes / bh_edges.
+    """
+    nodes_cypher = """
+        MATCH (n)
+        WHERE n.name IS NOT NULL
+        RETURN labels(n)[0] AS node_type, n.name AS name, properties(n) AS props
+    """
+    edges_cypher = """
+        MATCH (a)-[r]->(b)
+        WHERE a.name IS NOT NULL AND b.name IS NOT NULL
+        RETURN a.name        AS source_name,
+               labels(a)[0]  AS source_type,
+               type(r)        AS rel_type,
+               b.name        AS target_name,
+               labels(b)[0]  AS target_type,
+               properties(r) AS rel_props
+    """
+    nodes = run_query(nodes_cypher)
+    edges = run_query(edges_cypher)
+    return {"nodes": nodes, "edges": edges}
+
+
 def get_owned_paths(owned_nodes: list[str], domain: str) -> list[dict]:
     """
     All shortest paths from any owned/compromised node to Domain Admins.

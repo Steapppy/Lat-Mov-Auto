@@ -438,6 +438,128 @@ def bloodhound_asreproastable(domain: str = "ICCN.LOCAL"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/bloodhound/sync")
+def bloodhound_sync():
+    """
+    Dump every BloodHound node and relationship into the loot DB.
+    Re-runnable — upserts on conflict so re-syncing refreshes stale data.
+    """
+    try:
+        data = bh.sync_all()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+    nodes_count = 0
+    edges_count = 0
+
+    with get_conn() as conn:
+        for node in data["nodes"]:
+            if not node.get("name"):
+                continue
+            conn.execute("""
+                INSERT INTO bh_nodes (name, node_type, properties)
+                VALUES (?, ?, ?)
+                ON CONFLICT(name, node_type) DO UPDATE SET
+                    properties = excluded.properties,
+                    synced_at  = datetime('now')
+            """, (node["name"], node.get("node_type") or "Unknown",
+                  json.dumps(node.get("props", {}))))
+            nodes_count += 1
+
+        for edge in data["edges"]:
+            if not edge.get("source_name") or not edge.get("target_name"):
+                continue
+            conn.execute("""
+                INSERT INTO bh_edges (source_name, source_type, rel_type, target_name, target_type, properties)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(source_name, rel_type, target_name) DO UPDATE SET
+                    properties = excluded.properties,
+                    synced_at  = datetime('now')
+            """, (edge["source_name"], edge.get("source_type") or "Unknown",
+                  edge["rel_type"],
+                  edge["target_name"], edge.get("target_type") or "Unknown",
+                  json.dumps(edge.get("rel_props", {}))))
+            edges_count += 1
+
+    print(f"[+] BloodHound sync: {nodes_count} nodes, {edges_count} edges")
+    return {"nodes_synced": nodes_count, "edges_synced": edges_count}
+
+
+# ── BloodHound loot DB read endpoints (for the AI) ────────────────────────────
+
+@app.get("/bh/nodes")
+def get_bh_nodes(node_type: Optional[str] = None, name: Optional[str] = None):
+    """Query stored BloodHound nodes. Filter by type (User/Computer/Group/Domain) or name."""
+    with get_conn() as conn:
+        query  = "SELECT * FROM bh_nodes WHERE 1=1"
+        params = []
+        if node_type:
+            query += " AND node_type = ?"
+            params.append(node_type)
+        if name:
+            query += " AND name LIKE ?"
+            params.append(f"%{name}%")
+        rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/bh/edges")
+def get_bh_edges(
+    rel_type:    Optional[str] = None,
+    source_name: Optional[str] = None,
+    target_name: Optional[str] = None,
+    source_type: Optional[str] = None,
+    target_type: Optional[str] = None,
+):
+    """Query stored BloodHound relationships. Supports filtering on any field."""
+    with get_conn() as conn:
+        query  = "SELECT * FROM bh_edges WHERE 1=1"
+        params = []
+        for col, val in [
+            ("rel_type",    rel_type),
+            ("source_name", source_name),
+            ("target_name", target_name),
+            ("source_type", source_type),
+            ("target_type", target_type),
+        ]:
+            if val:
+                query += f" AND {col} = ?"
+                params.append(val)
+        rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+@app.get("/bh/owned-edges")
+def get_owned_edges():
+    """
+    All BloodHound edges where the source node matches a credential in the loot DB.
+    Normalizes stored usernames to USER@DOMAIN format for matching.
+    """
+    with get_conn() as conn:
+        creds = conn.execute(
+            "SELECT DISTINCT username FROM credentials"
+        ).fetchall()
+
+        if not creds:
+            return []
+
+        # Extract just the username part from BH node names (before the @)
+        # and compare case-insensitively
+        usernames = [r["username"].upper() for r in creds]
+        placeholders = ",".join("?" * len(usernames))
+        rows = conn.execute(f"""
+            SELECT e.* FROM bh_edges e
+            WHERE upper(substr(e.source_name, 1,
+                  CASE WHEN instr(e.source_name, '@') > 0
+                       THEN instr(e.source_name, '@') - 1
+                       ELSE length(e.source_name) END
+                  )) IN ({placeholders})
+            ORDER BY e.rel_type, e.target_name
+        """, usernames).fetchall()
+
+    return [dict(r) for r in rows]
+
+
 # ── Attack path working memory (AI state) ─────────────────────────────────────
 
 @app.post("/attack_paths")

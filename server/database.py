@@ -59,6 +59,31 @@ def migrate_db():
                     saved_at    TEXT NOT NULL DEFAULT (datetime('now'))
                 )
             """)
+        if "bh_nodes" not in tables:
+            conn.execute("""
+                CREATE TABLE bh_nodes (
+                    node_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name        TEXT NOT NULL,
+                    node_type   TEXT NOT NULL,
+                    properties  TEXT NOT NULL DEFAULT '{}',
+                    synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(name, node_type)
+                )
+            """)
+        if "bh_edges" not in tables:
+            conn.execute("""
+                CREATE TABLE bh_edges (
+                    edge_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                    source_name TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    rel_type    TEXT NOT NULL,
+                    target_name TEXT NOT NULL,
+                    target_type TEXT NOT NULL,
+                    properties  TEXT NOT NULL DEFAULT '{}',
+                    synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                    UNIQUE(source_name, rel_type, target_name)
+                )
+            """)
 
 
 def init_db():
@@ -133,5 +158,26 @@ def init_db():
                 status      TEXT NOT NULL DEFAULT 'planned',
                 notes       TEXT DEFAULT '',
                 saved_at    TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
+            CREATE TABLE IF NOT EXISTS bh_nodes (
+                node_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                node_type   TEXT NOT NULL,
+                properties  TEXT NOT NULL DEFAULT '{}',
+                synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(name, node_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS bh_edges (
+                edge_id     INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_name TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                rel_type    TEXT NOT NULL,
+                target_name TEXT NOT NULL,
+                target_type TEXT NOT NULL,
+                properties  TEXT NOT NULL DEFAULT '{}',
+                synced_at   TEXT NOT NULL DEFAULT (datetime('now')),
+                UNIQUE(source_name, rel_type, target_name)
             );
         """)
