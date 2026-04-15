@@ -40,7 +40,7 @@ class TaskResult(BaseModel):
 class NewTask(BaseModel):
     agent_id: str
     instruction: str
-    task_type: str = "shell"   # shell | recon | sharphound | secretsdump | dpapi
+    task_type: str = "shell"   # shell | recon | sharphound | certipy | secretsdump | dpapi
 
 class NewRecon(BaseModel):
     agent_id: str

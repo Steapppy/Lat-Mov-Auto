@@ -26,6 +26,7 @@ Interact mode  (prompt changes to [agent_id] >):
 
 import sys
 import json
+import time
 import requests
 
 SERVER = "http://127.0.0.1:8080"
@@ -59,6 +60,31 @@ def _post(path, payload):
     except Exception as e:
         print(f"[-] {e}")
     return None
+
+
+# ── Result polling ───────────────────────────────────────────────────────────
+
+def _wait_for_result(agent_id, task_id, timeout=120, poll=2):
+    """Poll until task_id appears in results, then print output. Timeout in seconds."""
+    print(f"[*] Waiting for result (task {task_id})...", flush=True)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        rows = _get(f"/results/{agent_id}")
+        if rows:
+            for r in rows:
+                if r["task_id"] == task_id:
+                    print()
+                    output = r["output"]
+                    try:
+                        parsed = json.loads(output)
+                        output = json.dumps(parsed, indent=2)
+                    except Exception:
+                        pass
+                    for line in output.splitlines():
+                        print(f"  {line}")
+                    return
+        time.sleep(poll)
+    print(f"\n[-] Timed out waiting for task {task_id} result")
 
 
 # ── Display helpers ───────────────────────────────────────────────────────────
@@ -215,11 +241,13 @@ def handle_interact(line, agent_id):
             res = _post("/recon", {"agent_id": agent_id, "target": arg})
             if res:
                 print(f"[+] Recon task queued — task_id: {res['task_id']}")
+                _wait_for_result(agent_id, res["task_id"])
 
     elif cmd == "sharphound":
         res = _post("/task", {"agent_id": agent_id, "task_type": "sharphound", "instruction": arg or ""})
         if res:
             print(f"[+] SharpHound task queued — task_id: {res['task_id']}")
+            _wait_for_result(agent_id, res["task_id"], timeout=300)
 
     elif cmd == "certipy":
         if not arg:
@@ -228,6 +256,7 @@ def handle_interact(line, agent_id):
             res = _post("/task", {"agent_id": agent_id, "task_type": "certipy", "instruction": arg})
             if res:
                 print(f"[+] Certipy task queued — task_id: {res['task_id']}")
+                _wait_for_result(agent_id, res["task_id"], timeout=120)
 
     elif cmd == "secretsdump":
         if not arg:
@@ -236,6 +265,7 @@ def handle_interact(line, agent_id):
             res = _post("/task", {"agent_id": agent_id, "task_type": "secretsdump", "instruction": arg})
             if res:
                 print(f"[+] Secretsdump task queued — task_id: {res['task_id']}")
+                _wait_for_result(agent_id, res["task_id"], timeout=120)
 
     elif cmd == "dpapi":
         if not arg:
@@ -244,6 +274,7 @@ def handle_interact(line, agent_id):
             res = _post("/task", {"agent_id": agent_id, "task_type": "dpapi", "instruction": arg})
             if res:
                 print(f"[+] DPAPI task queued — task_id: {res['task_id']}")
+                _wait_for_result(agent_id, res["task_id"], timeout=120)
 
     elif cmd == "shell":
         command = arg if arg else ""
@@ -253,12 +284,14 @@ def handle_interact(line, agent_id):
             res = _post("/task", {"agent_id": agent_id, "task_type": "shell", "instruction": command})
             if res:
                 print(f"[+] Shell task queued — task_id: {res['task_id']}")
+                _wait_for_result(agent_id, res["task_id"])
 
     else:
         # Default: treat the whole line as a shell command
         res = _post("/task", {"agent_id": agent_id, "task_type": "shell", "instruction": line})
         if res:
             print(f"[+] Shell task queued — task_id: {res['task_id']}")
+            _wait_for_result(agent_id, res["task_id"])
 
     return True
 

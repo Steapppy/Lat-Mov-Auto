@@ -2,7 +2,6 @@ C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\client.exe
 C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\client.deps.json
 C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\client.runtimeconfig.json
 C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\client.dll
-C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\client.pdb
 C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\Microsoft.CSharp.dll
 C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\Microsoft.VisualBasic.Core.dll
 C:\Users\mspc\Lat-Mov-Auto\client\bin\Release\net10.0\win-x64\Microsoft.VisualBasic.dll
@@ -197,7 +196,5 @@ C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.csproj.Core
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.csproj.Up2Date
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.dll
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\refint\client.dll
-C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.pdb
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.genruntimeconfig.cache
 C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\ref\client.dll
-C:\Users\mspc\Lat-Mov-Auto\client\obj\Release\net10.0\win-x64\client.sourcelink.json
