@@ -357,11 +357,22 @@ namespace BreachClient
         /// <summary>SMB — authenticate via IPC$ and list shares, then clean up the session.</summary>
         static string RunSmbAuth(string username, string password, string target)
         {
+            // Clean up any existing session first to avoid "multiple connections" error
+            ExecuteCommand($"net use \\\\{target}\\IPC$ /delete /yes 2>nul");
+
             string connect = ExecuteCommand($"net use \\\\{target}\\IPC$ \"{password}\" /user:{username}");
 
-            if (connect.Contains("error", StringComparison.OrdinalIgnoreCase) ||
-                connect.Contains("Access is denied", StringComparison.OrdinalIgnoreCase))
+            bool failed = connect.Contains("error", StringComparison.OrdinalIgnoreCase)
+                       || connect.Contains("Access is denied", StringComparison.OrdinalIgnoreCase)
+                       || connect.Contains("invalid", StringComparison.OrdinalIgnoreCase)
+                       || connect.Contains("incorrect", StringComparison.OrdinalIgnoreCase)
+                       || connect.Contains("denied", StringComparison.OrdinalIgnoreCase);
+
+            if (failed)
+            {
+                ExecuteCommand($"net use \\\\{target}\\IPC$ /delete /yes 2>nul");
                 return connect.Trim();
+            }
 
             string shares = ExecuteCommand($"net view \\\\{target}");
             ExecuteCommand($"net use \\\\{target}\\IPC$ /delete /yes");
