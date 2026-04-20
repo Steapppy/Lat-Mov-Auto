@@ -164,9 +164,9 @@ def _parse_auth_args(arg):
     i = 0
     while i < len(tokens):
         if tokens[i] == "-u" and i + 1 < len(tokens):
-            username = tokens[i + 1]; i += 2
+            username = tokens[i + 1].strip("'\""); i += 2
         elif tokens[i] == "-p" and i + 1 < len(tokens):
-            password = tokens[i + 1]; i += 2
+            password = tokens[i + 1].strip("'\""); i += 2
         elif tokens[i] == "-s" and i + 1 < len(tokens):
             service = tokens[i + 1].lower(); i += 2
         else:
