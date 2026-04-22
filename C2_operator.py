@@ -33,6 +33,7 @@ Interact mode  (prompt changes to [agent_id] >):
 import sys
 import json
 import time
+import shlex
 import requests
 
 SERVER = "http://127.0.0.1:8080"
@@ -193,7 +194,10 @@ def _print_loot(data):
 
 def _parse_auth_args(arg):
     """Parse: -u user -p password [-s service] [-c command] [--all] [target]"""
-    tokens = arg.split()
+    try:
+        tokens = shlex.split(arg, posix=False)
+    except ValueError:
+        tokens = arg.split()
     username = password = target = service = command = None
     spray_all = False
     i = 0
