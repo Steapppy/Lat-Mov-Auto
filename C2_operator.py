@@ -41,10 +41,17 @@ SERVER = "http://127.0.0.1:8080"
 # Ports that indicate a usable lateral movement service
 LATERAL_PORTS = {5985: "winrm", 5986: "winrm", 445: "smb", 135: "wmi"}
 
-# Keywords that indicate a failed authentication attempt
+# Keywords that indicate a failed authentication attempt.
+# Keep these specific — broad terms like "error" cause false positives
+# (e.g. "net user /domain" always ends with "completed with one or more errors").
 FAIL_KEYWORDS = (
-    "error", "access is denied", "invalid", "incorrect",
-    "denied", "logon failure", "exec error",
+    "winrs error",       # WinRM connectivity / auth failure
+    "system error",      # SMB net use failure (e.g. "System error 5")
+    "exec error",        # client-side execution failure
+    "access is denied",
+    "logon failure",
+    "invalid password",
+    "incorrect password",
 )
 
 
