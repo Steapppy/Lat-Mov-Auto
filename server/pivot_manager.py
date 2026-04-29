@@ -1,6 +1,9 @@
 import subprocess
 
 
+_proxy_proc = None   # running ligolo-ng proxy subprocess, or None
+
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 def _run(cmd: list[str]) -> dict:
@@ -64,3 +67,60 @@ def del_route(subnet: str, interface: str = "ligolo") -> dict:
         interface: TUN interface name
     """
     return _run(["ip", "route", "del", subnet, "dev", interface])
+
+
+# ── Proxy process management ──────────────────────────────────────────────────
+
+def start_proxy(interface: str = "ligolo", port: int = 11601, proxy_bin: str = "./proxy") -> dict:
+    """
+    Ensure the TUN interface exists, then launch the ligolo-ng proxy as a
+    background subprocess.  Safe to call when already running — returns
+    already_running=True without spawning a second process.
+    """
+    global _proxy_proc
+    if _proxy_proc and _proxy_proc.poll() is None:
+        return {"ok": True, "already_running": True, "pid": _proxy_proc.pid, "port": port}
+
+    iface = ensure_interface(interface)
+    if not iface["ok"]:
+        return {"ok": False, "error": f"TUN interface: {iface['error']}"}
+
+    try:
+        _proxy_proc = subprocess.Popen(
+            [proxy_bin, "-selfcert", "-laddr", f"0.0.0.0:{port}"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return {"ok": True, "already_running": False, "pid": _proxy_proc.pid,
+                "port": port, "interface": interface}
+    except FileNotFoundError:
+        return {"ok": False, "error": f"proxy binary not found at '{proxy_bin}'"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+def stop_proxy() -> dict:
+    """Terminate the running proxy process."""
+    global _proxy_proc
+    if _proxy_proc is None or _proxy_proc.poll() is not None:
+        _proxy_proc = None
+        return {"ok": True, "was_running": False}
+    _proxy_proc.terminate()
+    try:
+        _proxy_proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _proxy_proc.kill()
+    _proxy_proc = None
+    return {"ok": True, "was_running": True}
+
+
+def get_proxy_status() -> dict:
+    """Return current proxy state."""
+    global _proxy_proc
+    if _proxy_proc is None:
+        return {"running": False}
+    if _proxy_proc.poll() is None:
+        return {"running": True, "pid": _proxy_proc.pid}
+    code = _proxy_proc.returncode
+    _proxy_proc = None
+    return {"running": False, "exit_code": code}
