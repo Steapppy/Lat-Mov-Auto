@@ -87,9 +87,8 @@ def start_proxy(interface: str = "ligolo", port: int = 11601, proxy_bin: str = "
 
     try:
         _proxy_proc = subprocess.Popen(
-            [proxy_bin, "-selfcert", "-laddr", f"0.0.0.0:{port}"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            ["xterm", "-title", "ligolo-ng proxy", "-e",
+             proxy_bin, "-selfcert", "-laddr", f"0.0.0.0:{port}"],
         )
         return {"ok": True, "already_running": False, "pid": _proxy_proc.pid,
                 "port": port, "interface": interface}
