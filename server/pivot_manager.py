@@ -1,3 +1,5 @@
+import os
+import shutil
 import subprocess
 
 
@@ -81,19 +83,30 @@ def start_proxy(interface: str = "ligolo", port: int = 11601, proxy_bin: str = "
     if _proxy_proc and _proxy_proc.poll() is None:
         return {"ok": True, "already_running": True, "pid": _proxy_proc.pid, "port": port}
 
+    if not os.path.isfile(proxy_bin):
+        return {"ok": False, "error": f"proxy binary not found at '{proxy_bin}'"}
+    if not os.access(proxy_bin, os.X_OK):
+        return {"ok": False, "error": f"proxy binary not executable — run: chmod +x {proxy_bin}"}
+
     iface = ensure_interface(interface)
     if not iface["ok"]:
         return {"ok": False, "error": f"TUN interface: {iface['error']}"}
 
+    proxy_cmd = [proxy_bin, "-selfcert", "-laddr", f"0.0.0.0:{port}"]
+
+    # Pick the best available terminal so the operator can interact with the proxy console
+    if os.environ.get("TMUX") and shutil.which("tmux"):
+        cmd = ["tmux", "new-window", "-n", "ligolo-proxy"] + proxy_cmd
+    elif shutil.which("xterm"):
+        cmd = ["xterm", "-title", "ligolo-ng proxy", "-e"] + proxy_cmd
+    else:
+        # Headless fallback — operator must run proxy manually and type 'start'
+        cmd = proxy_cmd
+
     try:
-        _proxy_proc = subprocess.Popen(
-            ["xterm", "-title", "ligolo-ng proxy", "-e",
-             proxy_bin, "-selfcert", "-laddr", f"0.0.0.0:{port}"],
-        )
+        _proxy_proc = subprocess.Popen(cmd)
         return {"ok": True, "already_running": False, "pid": _proxy_proc.pid,
                 "port": port, "interface": interface}
-    except FileNotFoundError:
-        return {"ok": False, "error": f"proxy binary not found at '{proxy_bin}'"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
 
