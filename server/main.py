@@ -399,6 +399,17 @@ def list_tunnels():
     return [dict(r) for r in rows]
 
 
+@app.post("/pivot/interface")
+def ensure_interface_endpoint(data: ProxyStartRequest):
+    """Create the TUN interface without starting the proxy process."""
+    result = ensure_interface(data.interface)
+    if not result["ok"]:
+        raise HTTPException(status_code=500, detail=result["error"])
+    if result.get("created"):
+        print(f"[*] TUN interface '{data.interface}' created")
+    return result
+
+
 @app.post("/pivot/proxy/start")
 def start_proxy_endpoint(data: ProxyStartRequest):
     """

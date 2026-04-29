@@ -757,15 +757,10 @@ def handle_interact(line, agent_id):
                     except ValueError:
                         pass
 
-                print(f"[*] Starting ligolo-ng proxy on server (iface: {iface}, port: {port})...")
-                proxy_res = _post("/pivot/proxy/start", {"interface": iface, "port": port})
-                if not proxy_res:
+                # Ensure TUN interface exists (proxy is managed manually by the operator)
+                iface_res = _post("/pivot/interface", {"interface": iface, "port": port})
+                if not iface_res:
                     return True
-
-                if proxy_res.get("already_running"):
-                    print(f"[*] Proxy already running (PID {proxy_res.get('pid')})")
-                else:
-                    print(f"[+] Proxy started (PID {proxy_res.get('pid')}) — TUN: {iface}, port: {port}")
 
                 print(f"[*] Deploying ligolo-ng agent to {agent_id}...")
                 task_res = _post("/task", {
