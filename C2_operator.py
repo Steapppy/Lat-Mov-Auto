@@ -274,7 +274,7 @@ def _parse_tunnel_args(arg):
 def _parse_auth_args(arg):
     """Parse: -u user -p password [-s service] [-c command] [--all] [target]"""
     try:
-        tokens = shlex.split(arg, posix=False)
+        tokens = shlex.split(arg, posix=True)
     except ValueError:
         tokens = arg.split()
     username = password = target = service = command = None
@@ -748,7 +748,7 @@ def handle_interact(line, agent_id):
                 print(f"  aclabuse {op} {sig} [-u altuser -p altpass]")
         else:
             try:
-                tokens = shlex.split(arg, posix=False)
+                tokens = shlex.split(arg, posix=True)
             except ValueError:
                 tokens = arg.split()
             tokens = [t.strip("'\"") for t in tokens]
