@@ -7,8 +7,8 @@ $domain = "ICCN.local"
 
 # ── 1. Create users ──────────────────────────────────────────────────────────
 $users = @(
-    @{ Name = "jsmith";     Pass = "Password123!"; Desc = "Regular domain user — initial foothold on WS01" },
-    @{ Name = "helpdesk";   Pass = "Helpdesk123!"; Desc = "Helpdesk account — cached on WS02, has SPN" },
+    @{ Name = "jsmith";     Pass = "Password123!"; Desc = "Regular domain user — initial foothold on DEAGLE" },
+    @{ Name = "helpdesk";   Pass = "Helpdesk123!"; Desc = "Helpdesk account — cached on KIRA, has SPN" },
     @{ Name = "svc_backup"; Pass = "Backup2024!";  Desc = "Backup service account — over-privileged DA member" }
 )
 
@@ -31,8 +31,8 @@ Add-ADGroupMember -Identity "Domain Admins" -Members "svc_backup"
 Write-Host "[+] svc_backup added to Domain Admins"
 
 # ── 3. helpdesk SPN (makes it Kerberoastable) ────────────────────────────────
-Set-ADUser -Identity "helpdesk" -ServicePrincipalNames @{Add = "HTTP/ws02.ICCN.local"}
-Write-Host "[+] SPN set on helpdesk: HTTP/ws02.ICCN.local"
+Set-ADUser -Identity "helpdesk" -ServicePrincipalNames @{Add = "HTTP/KIRA.ICCN.local"}
+Write-Host "[+] SPN set on helpdesk: HTTP/KIRA.ICCN.local"
 
 # ── 4. helpdesk GenericAll on svc_backup ─────────────────────────────────────
 $helpdeskSid = (Get-ADUser "helpdesk").SID
@@ -49,4 +49,4 @@ Set-Acl "AD:\$svcDN" $acl
 Write-Host "[+] GenericAll granted: helpdesk -> svc_backup"
 
 Write-Host ""
-Write-Host "=== DC setup done. Now run setup_ws01.ps1 on WS01 and setup_ws02.ps1 on WS02 ==="
+Write-Host "=== DC setup done. Now run setup_deagle.ps1 on DEAGLE and setup_kira.ps1 on KIRA ==="
