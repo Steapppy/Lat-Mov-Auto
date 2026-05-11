@@ -441,6 +441,35 @@ def proxy_status_endpoint():
     return get_proxy_status()
 
 
+@app.post("/reset")
+def reset_db():
+    """Wipe all operational data (agents, tasks, results, hosts, credentials, tunnels) and loot files."""
+    with get_conn() as conn:
+        conn.executescript("""
+            DELETE FROM results;
+            DELETE FROM tasks;
+            DELETE FROM credentials;
+            DELETE FROM hosts;
+            DELETE FROM tunnels;
+            DELETE FROM agents;
+            DELETE FROM attack_paths;
+            DELETE FROM bh_nodes;
+            DELETE FROM bh_edges;
+        """)
+
+    # Re-seed the built-in server agent
+    ensure_server_agent()
+
+    # Wipe uploaded loot files (keep per-agent subdirs structure by removing contents)
+    wiped = 0
+    for root, dirs, files in os.walk(LOOT_DIR):
+        for f in files:
+            os.remove(os.path.join(root, f))
+            wiped += 1
+
+    return {"status": "reset", "loot_files_removed": wiped}
+
+
 # ── Disabled — BloodHound server-side querying (moved to SharpHound on agent) ─
 #
 # @app.get("/bloodhound/status")          — check Neo4j connection

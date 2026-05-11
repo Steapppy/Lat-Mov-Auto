@@ -12,6 +12,7 @@ Global mode:
   tunnels                     — list registered pivot tunnels
   pivot status                — check if ligolo-ng proxy is running
   pivot stop                  — stop the ligolo-ng proxy
+  reset                       — wipe ALL data (agents, tasks, hosts, creds, loot files) — asks for confirmation
   help                        — show this help
   exit / quit                 — exit the CLI
 
@@ -71,6 +72,20 @@ FAIL_KEYWORDS = (
 
 
 # ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+def _delete(path):
+    try:
+        r = requests.delete(f"{SERVER}{path}", timeout=10)
+        r.raise_for_status()
+        return r.json()
+    except requests.exceptions.ConnectionError:
+        print(f"[-] Cannot reach server at {SERVER}")
+    except requests.exceptions.HTTPError as e:
+        print(f"[-] HTTP {e.response.status_code}: {e.response.text}")
+    except Exception as e:
+        print(f"[-] {e}")
+    return None
+
 
 def _get(path):
     try:
@@ -576,6 +591,15 @@ def handle_global(line):
                 print("[+] Proxy stopped" if res.get("was_running") else "[*] Proxy was not running")
         else:
             print("usage: pivot status | pivot stop")
+
+    elif cmd == "reset":
+        confirm = input("[!] This will wipe ALL agents, tasks, hosts, credentials, and loot files. Type 'yes' to confirm: ").strip().lower()
+        if confirm == "yes":
+            res = _post("/reset", {})
+            if res:
+                print(f"[+] Reset complete — {res.get('loot_files_removed', 0)} loot file(s) removed.")
+        else:
+            print("[*] Reset cancelled.")
 
     elif cmd == "interact":
         if not arg:
