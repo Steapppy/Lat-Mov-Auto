@@ -497,11 +497,16 @@ foreach ($r in $results) {
                 // PowerShell commands: base64-encode to avoid quoting hell through winrs→cmd chain
                 if (cmd.StartsWith("powershell", StringComparison.OrdinalIgnoreCase))
                 {
-                    string script = cmd;
-                    if (script.StartsWith("powershell", StringComparison.OrdinalIgnoreCase))
-                        script = script.Substring("powershell".Length).TrimStart();
+                    string script = cmd.Substring("powershell".Length).TrimStart();
                     if (script.StartsWith("-c ", StringComparison.OrdinalIgnoreCase))
-                        script = script.Substring(3).Trim().Trim('"');
+                        script = script.Substring(3).Trim();
+                    // Strip outer escaped quotes \" ... \" or plain " ... "
+                    if (script.StartsWith("\\\"")) script = script.Substring(2);
+                    else if (script.StartsWith("\""))  script = script.Substring(1);
+                    if (script.EndsWith("\\\"")) script = script.Substring(0, script.Length - 2);
+                    else if (script.EndsWith("\""))  script = script.Substring(0, script.Length - 1);
+                    // Unescape any remaining \" → "
+                    script = script.Replace("\\\"", "\"");
                     string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
                     psi.ArgumentList.Add("powershell");
                     psi.ArgumentList.Add("-NonInteractive");
