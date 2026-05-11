@@ -480,9 +480,53 @@ foreach ($r in $results) {
             string cmd = string.IsNullOrWhiteSpace(command)
                 ? "whoami && hostname && ipconfig"
                 : command;
-            return ExecuteCommand(
-                $"winrs -r:http://{target}:5985 -u:{username} -p:{password} cmd /c \"{cmd}\""
-            );
+            try
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName               = "winrs.exe",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError  = true,
+                    UseShellExecute        = false,
+                    CreateNoWindow         = true
+                };
+                psi.ArgumentList.Add($"-r:http://{target}:5985");
+                psi.ArgumentList.Add($"-u:{username}");
+                psi.ArgumentList.Add($"-p:{password}");
+
+                // PowerShell commands: base64-encode to avoid quoting hell through winrs→cmd chain
+                if (cmd.StartsWith("powershell", StringComparison.OrdinalIgnoreCase))
+                {
+                    string script = cmd;
+                    if (script.StartsWith("powershell", StringComparison.OrdinalIgnoreCase))
+                        script = script.Substring("powershell".Length).TrimStart();
+                    if (script.StartsWith("-c ", StringComparison.OrdinalIgnoreCase))
+                        script = script.Substring(3).Trim().Trim('"');
+                    string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+                    psi.ArgumentList.Add("powershell");
+                    psi.ArgumentList.Add("-NonInteractive");
+                    psi.ArgumentList.Add("-EncodedCommand");
+                    psi.ArgumentList.Add(encoded);
+                }
+                else
+                {
+                    psi.ArgumentList.Add("cmd");
+                    psi.ArgumentList.Add("/c");
+                    psi.ArgumentList.Add(cmd);
+                }
+
+                using var proc = Process.Start(psi)!;
+                var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+                var stderrTask = proc.StandardError.ReadToEndAsync();
+                proc.WaitForExit();
+                string stdout = stdoutTask.Result;
+                string stderr = stderrTask.Result;
+                return string.IsNullOrWhiteSpace(stderr) ? stdout : stdout + "\n[stderr] " + stderr;
+            }
+            catch (Exception e)
+            {
+                return $"[exec error] {e.Message}";
+            }
         }
 
         /// <summary>
