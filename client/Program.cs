@@ -623,10 +623,14 @@ foreach ($r in $results) {
         }
 
         // Builds the PowerShell $root DirectoryEntry line, with or without credentials.
-        static string AdsiRoot(string? altUser, string? altPass) =>
-            altUser != null
-                ? $"$root = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$env:USERDNSDOMAIN\", '{altUser}', '{altPass}')"
-                : "$root = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$env:USERDNSDOMAIN\")";
+        // Falls back to WMI domain lookup when $env:USERDNSDOMAIN is empty (e.g. running as SYSTEM).
+        static string AdsiRoot(string? altUser, string? altPass)
+        {
+            const string domainLine = "$_d = if ($env:USERDNSDOMAIN) { $env:USERDNSDOMAIN } else { (Get-WmiObject Win32_ComputerSystem).Domain }";
+            return altUser != null
+                ? $"{domainLine}\n$root = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$_d\", '{altUser}', '{altPass}')"
+                : $"{domainLine}\n$root = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$_d\")";
+        }
 
         /// <summary>
         /// Run a PowerShell script via -EncodedCommand (UTF-16 LE base64) to avoid
