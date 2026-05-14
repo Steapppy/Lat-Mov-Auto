@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>ICCN.LOCAL — Network Intelligence Report</title>
+<title>BABY2.VL — Network Intelligence Report</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
 <style>
   :root {
@@ -124,13 +124,13 @@
   <div class="header-left">
     <div class="header-logo">AD</div>
     <div class="header-title">
-      <h1>ICCN.LOCAL &mdash; Network Intelligence Report</h1>
+      <h1>BABY2.VL &mdash; Network Intelligence Report</h1>
       <p>Active Directory Attack Surface Analysis &bull; 2016</p>
     </div>
   </div>
   <div class="header-meta">
     <div class="meta-chip">Date: <span>2026-05-14</span></div>
-    <div class="meta-chip">Domain SID: <span>S-1-5-21-3431850111-3779057214-1162477026</span></div>
+    <div class="meta-chip">Domain SID: <span>S-1-5-21-213243958-1766259620-4276976267</span></div>
     <div class="badge-live">ACTIVE</div>
   </div>
 </header>
@@ -138,19 +138,19 @@
 <div class="stats-bar">
   <div class="stat-card hosts">
     <div class="stat-icon hosts">&#x1F5A5;&#xFE0F;</div>
-    <div><div class="stat-value">4</div><div class="stat-label">Hosts Discovered</div></div>
+    <div><div class="stat-value">0</div><div class="stat-label">Hosts Discovered</div></div>
   </div>
   <div class="stat-card users">
     <div class="stat-icon users">&#x1F464;</div>
-    <div><div class="stat-value">11</div><div class="stat-label">Domain Users</div></div>
+    <div><div class="stat-value">16</div><div class="stat-label">Domain Users</div></div>
   </div>
   <div class="stat-card kerb">
     <div class="stat-icon kerb">&#x1F3AB;</div>
-    <div><div class="stat-value">2</div><div class="stat-label">Kerberoastable Accounts</div></div>
+    <div><div class="stat-value">0</div><div class="stat-label">Kerberoastable Accounts</div></div>
   </div>
   <div class="stat-card critical">
     <div class="stat-icon critical">&#x26A0;&#xFE0F;</div>
-    <div><div class="stat-value">2</div><div class="stat-label">Critical ACL Paths</div></div>
+    <div><div class="stat-value">3</div><div class="stat-label">Critical ACL Paths</div></div>
   </div>
 </div>
 
@@ -179,9 +179,9 @@
 
 <div class="main-layout">
   <div class="graph-wrapper">
-    <div class="attack-path-banner" id="attackBanner">&#x26A1; HELPDESK → SVC_BACKUP → ICCN (GenericAll) → DA → DCSync → Full Compromise</div>
+    <div class="attack-path-banner" id="attackBanner">&#x26A1; NICOLA.LAMB -&gt; LEGACY -&gt; GPOADM -&gt; DEFAULT DOMAIN POLICY -&gt; Full Compromise</div>
     <div id="network-graph"></div>
-    <div class="graph-watermark">ICCN.LOCAL · 10.0.2.0/24 · vis-network 9.1.9</div>
+    <div class="graph-watermark">BABY2.VL ·  · vis-network 9.1.9</div>
   </div>
   <div class="sidebar">
     <div class="panel">
@@ -231,44 +231,13 @@
   <div class="section-header">
     <div>
       <div class="section-title">Network Topology</div>
-      <div class="section-sub">Discovered via port scan of 10.0.2.0/24</div>
+      <div class="section-sub">Discovered via port scan of </div>
     </div>
   </div>
   <table>
     <thead><tr><th>IP Address</th><th>Hostname</th><th>Role</th><th>Operating System</th><th>Open Ports</th><th>Services</th></tr></thead>
     <tbody>
-      <tr>
-        <td class="td-ip">10.0.2.2</td>
-        <td class="td-host"><span style="color:var(--text-muted);font-style:italic">(unknown)</span></td>
-        <td><span style="color:var(--text-muted)">—</span></td>
-        <td><span class="os-icon">❓</span> Unknown</td>
-        <td><span class="port-chip">135</span><span class="port-chip">445</span></td>
-        <td>MSRPC, SMB</td>
-      </tr>
-      <tr>
-        <td class="td-ip">10.0.2.6</td>
-        <td class="td-host">Deagle.ICCN.local</td>
-        <td><span class="role-ws">Workstation</span></td>
-        <td><span class="os-icon">💻</span> Windows 10 Enterprise Evaluation</td>
-        <td><span class="port-chip">135</span><span class="port-chip">139</span><span class="port-chip">445</span><span class="port-chip highlight">5985</span></td>
-        <td>MSRPC, NetBIOS, SMB, WinRM-HTTP</td>
-      </tr>
-      <tr>
-        <td class="td-ip">10.0.2.8</td>
-        <td class="td-host">ICCN.ICCN.local</td>
-        <td><span class="role-dc">Domain Controller</span></td>
-        <td><span class="os-icon">🖥️</span> Windows Server 2019 Standard Evaluation</td>
-        <td><span class="port-chip">80</span><span class="port-chip">135</span><span class="port-chip">139</span><span class="port-chip">445</span><span class="port-chip highlight">5985</span></td>
-        <td>HTTP (Microsoft-IIS/10.0), MSRPC, NetBIOS, SMB, WinRM-HTTP · <strong style="color:var(--accent-purple)">Unconstrained Delegation</strong></td>
-      </tr>
-      <tr>
-        <td class="td-ip">10.0.2.14</td>
-        <td class="td-host">KIRA.ICCN.local</td>
-        <td><span class="role-ws">Workstation</span></td>
-        <td><span class="os-icon">💻</span> Windows 10 Enterprise Evaluation</td>
-        <td><span class="port-chip">135</span><span class="port-chip">139</span><span class="port-chip">445</span><span class="port-chip highlight">5985</span></td>
-        <td>MSRPC, NetBIOS, SMB, WinRM-HTTP</td>
-      </tr>
+
     </tbody>
   </table>
 </div>
@@ -277,7 +246,7 @@
 
 <footer class="footer">
   <div>Generated by <span class="footer-brand">Lat-Mov-Auto</span> &bull; AI-powered lateral movement framework</div>
-  <div>ICCN.LOCAL &bull; 10.0.2.0/24 &bull; Scan date: 2026-05-14</div>
+  <div>BABY2.VL &bull;  &bull; Scan date: 2026-05-14</div>
 </footer>
 
 <script>
@@ -287,203 +256,76 @@ if (typeof vis === 'undefined') {
 }
 
 const nodeData = {
-  "deagle": {
-    "id": "deagle",
-    "label": "DEAGLE",
-    "type": "computer",
-    "info": {
-      "Type": "Computer",
-      "IP": "10.0.2.6",
-      "OS": "Windows 10 Enterprise Evaluation",
-      "FQDN": "DEAGLE.ICCN.LOCAL"
-    },
-    "flags": [
-      "critical"
-    ]
-  },
-  "kira": {
-    "id": "kira",
-    "label": "KIRA",
-    "type": "computer",
-    "info": {
-      "Type": "Computer",
-      "IP": "10.0.2.14",
-      "OS": "Windows 10 Enterprise Evaluation",
-      "FQDN": "KIRA.ICCN.LOCAL"
-    },
-    "flags": [
-      "critical"
-    ]
-  },
-  "iccn": {
-    "id": "iccn",
-    "label": "ICCN",
+  "baby2": {
+    "id": "baby2",
+    "label": "BABY2",
     "type": "domain",
     "info": {
       "Type": "AD Domain",
       "Functional Level": "2016",
-      "SID": "S-1-5-21-3431850111-3779057214-1162477026"
+      "SID": "S-1-5-21-213243958-1766259620-4276976267"
     },
     "flags": [
       "critical"
     ]
   },
-  "pparker": {
-    "id": "pparker",
-    "label": "PPARKER",
-    "type": "user",
+  "default_domain_policy": {
+    "id": "default_domain_policy",
+    "label": "DEFAULT DOMAIN POLICY",
+    "type": "gpo",
     "info": {
-      "Type": "Domain User",
-      "SAM": "pparker",
-      "Enabled": "Yes",
-      "Admin Count": "No"
+      "Type": "Gpo",
+      "GUID": "\\\\BABY2.VL\\SYSVOL\\BABY2.VL\\POLICIES\\{31B2F340-016D-11D2-945F-00C04FB984F9}",
+      "DN": "CN={31B2F340-016D-11D2-945F-00C04FB984F9},CN=POLICIES,CN=SYSTEM,DC=BABY2,DC=VL"
     },
     "flags": [
       "critical"
     ]
   },
-  "svc_backup": {
-    "id": "svc_backup",
-    "label": "SVC_BACKUP",
-    "type": "user_da",
+  "default_domain_controllers_policy": {
+    "id": "default_domain_controllers_policy",
+    "label": "DEFAULT DOMAIN CONTROLLERS POLICY",
+    "type": "gpo",
     "info": {
-      "Type": "Domain Admin",
-      "SAM": "svc_backup",
-      "Enabled": "Yes",
-      "Admin Count": "Yes"
-    },
-    "flags": [
-      "critical",
-      "da"
-    ]
-  },
-  "guest": {
-    "id": "guest",
-    "label": "GUEST",
-    "type": "user_disabled",
-    "info": {
-      "Type": "Disabled Account",
-      "SAM": "Guest",
-      "Enabled": "No",
-      "Admin Count": "No"
-    },
-    "flags": [
-      "critical",
-      "disabled"
-    ]
-  },
-  "jsmith": {
-    "id": "jsmith",
-    "label": "JSMITH",
-    "type": "user",
-    "info": {
-      "Type": "Domain User",
-      "SAM": "jsmith",
-      "Enabled": "Yes",
-      "Admin Count": "No"
+      "Type": "Gpo",
+      "GUID": "\\\\BABY2.VL\\SYSVOL\\BABY2.VL\\POLICIES\\{6AC1786C-016F-11D2-945F-00C04FB984F9}",
+      "DN": "CN={6AC1786C-016F-11D2-945F-00C04FB984F9},CN=POLICIES,CN=SYSTEM,DC=BABY2,DC=VL"
     },
     "flags": [
       "critical"
     ]
   },
-  "helpdesk": {
-    "id": "helpdesk",
-    "label": "HELPDESK",
-    "type": "user",
+  "legacy": {
+    "id": "legacy",
+    "label": "LEGACY",
+    "type": "group",
     "info": {
-      "Type": "Domain User",
-      "SAM": "helpdesk",
-      "Enabled": "Yes",
-      "Admin Count": "No",
-      "SPNs": "HTTP/KIRA.ICCN.local"
+      "Type": "Security Group",
+      "Members": "AMELIA.GRIFFITHS, NICOLA.LAMB"
     },
     "flags": [
-      "kerb",
       "critical"
     ]
   },
-  "hawkeye": {
-    "id": "hawkeye",
-    "label": "HAWKEYE",
-    "type": "user_da",
+  "office": {
+    "id": "office",
+    "label": "OFFICE",
+    "type": "group",
     "info": {
-      "Type": "Domain Admin",
-      "SAM": "hawkeye",
-      "Enabled": "Yes",
-      "Admin Count": "Yes"
+      "Type": "Security Group",
+      "Members": "AMELIA.GRIFFITHS, JOEL.HURST, LYNDA.BAILEY, NICOLA.LAMB, KIERAN.MITCHELL, RYAN.JENKINS"
     },
     "flags": [
-      "da"
+      "critical"
     ]
   },
-  "administrator": {
-    "id": "administrator",
-    "label": "ADMINISTRATOR",
-    "type": "user_da",
+  "dnsadmins": {
+    "id": "dnsadmins",
+    "label": "DNSADMINS",
+    "type": "group",
     "info": {
-      "Type": "Domain Admin",
-      "SAM": "Administrator",
-      "Enabled": "Yes",
-      "Admin Count": "Yes"
-    },
-    "flags": [
-      "da"
-    ]
-  },
-  "sqlservice": {
-    "id": "sqlservice",
-    "label": "SQLSERVICE",
-    "type": "user_da",
-    "info": {
-      "Type": "Domain Admin",
-      "SAM": "SQLService",
-      "Enabled": "Yes",
-      "Admin Count": "Yes",
-      "SPNs": "ICCN/SQLService.iccn.local:60111"
-    },
-    "flags": [
-      "kerb",
-      "da"
-    ]
-  },
-  "tstark": {
-    "id": "tstark",
-    "label": "TSTARK",
-    "type": "user_da",
-    "info": {
-      "Type": "Domain Admin",
-      "SAM": "tstark",
-      "Enabled": "Yes",
-      "Admin Count": "Yes"
-    },
-    "flags": [
-      "da"
-    ]
-  },
-  "krbtgt": {
-    "id": "krbtgt",
-    "label": "KRBTGT",
-    "type": "user_disabled",
-    "info": {
-      "Type": "Disabled Account",
-      "SAM": "krbtgt",
-      "Enabled": "No",
-      "Admin Count": "Yes",
-      "SPNs": "kadmin/changepw"
-    },
-    "flags": [
-      "disabled"
-    ]
-  },
-  "fcastle": {
-    "id": "fcastle",
-    "label": "FCASTLE",
-    "type": "user",
-    "info": {
-      "Type": "Domain User",
-      "SAM": "fcastle",
-      "Enabled": "Yes",
-      "Admin Count": "No"
+      "Type": "Security Group",
+      "Members": "(none)"
     },
     "flags": [
       "critical"
@@ -492,16 +334,6 @@ const nodeData = {
   "server_operators": {
     "id": "server_operators",
     "label": "SERVER OPERATORS",
-    "type": "group",
-    "info": {
-      "Type": "Security Group",
-      "Members": "(none)"
-    },
-    "flags": []
-  },
-  "backup_operators": {
-    "id": "backup_operators",
-    "label": "BACKUP OPERATORS",
     "type": "group",
     "info": {
       "Type": "Security Group",
@@ -519,6 +351,56 @@ const nodeData = {
     },
     "flags": []
   },
+  "domain_admins": {
+    "id": "domain_admins",
+    "label": "DOMAIN ADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "JOAN.JENNINGS, ADMINISTRATOR"
+    },
+    "flags": []
+  },
+  "enterprise_admins": {
+    "id": "enterprise_admins",
+    "label": "ENTERPRISE ADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "ADMINISTRATOR"
+    },
+    "flags": []
+  },
+  "schema_admins": {
+    "id": "schema_admins",
+    "label": "SCHEMA ADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "ADMINISTRATOR"
+    },
+    "flags": []
+  },
+  "replicator": {
+    "id": "replicator",
+    "label": "REPLICATOR",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
+  "backup_operators": {
+    "id": "backup_operators",
+    "label": "BACKUP OPERATORS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
   "print_operators": {
     "id": "print_operators",
     "label": "PRINT OPERATORS",
@@ -529,172 +411,342 @@ const nodeData = {
     },
     "flags": []
   },
-  "dnsadmins": {
-    "id": "dnsadmins",
-    "label": "DNSADMINS",
-    "type": "group",
-    "info": {
-      "Type": "Security Group",
-      "Members": "(none)"
-    },
-    "flags": [
-      "critical"
-    ]
-  },
   "administrators": {
     "id": "administrators",
     "label": "ADMINISTRATORS",
     "type": "group",
     "info": {
       "Type": "Security Group",
-      "Members": "(none)"
+      "Members": "DOMAIN ADMINS, ENTERPRISE ADMINS, ADMINISTRATOR"
     },
     "flags": []
   },
-  "enterprise_admins": {
-    "id": "enterprise_admins",
-    "label": "ENTERPRISE ADMINS",
-    "type": "group",
+  "nt_authority": {
+    "id": "nt_authority",
+    "label": "NT AUTHORITY",
+    "type": "user",
     "info": {
-      "Type": "Security Group",
-      "Members": "SQLSERVICE, TSTARK, ADMINISTRATOR"
+      "Type": "Domain User",
+      "SAM": "NT AUTHORITY",
+      "Enabled": "Yes",
+      "Admin Count": "No"
     },
     "flags": []
   },
-  "domain_admins": {
-    "id": "domain_admins",
-    "label": "DOMAIN ADMINS",
-    "type": "group",
+  "amelia_griffiths": {
+    "id": "amelia_griffiths",
+    "label": "AMELIA.GRIFFITHS",
+    "type": "user_da",
     "info": {
-      "Type": "Security Group",
-      "Members": "SVC_BACKUP, HAWKEYE, SQLSERVICE, TSTARK, ADMINISTRATOR"
+      "Type": "Domain Admin",
+      "SAM": "Amelia.Griffiths",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
     },
-    "flags": []
+    "flags": [
+      "da"
+    ]
   },
-  "schema_admins": {
-    "id": "schema_admins",
-    "label": "SCHEMA ADMINS",
-    "type": "group",
+  "library": {
+    "id": "library",
+    "label": "LIBRARY",
+    "type": "user",
     "info": {
-      "Type": "Security Group",
-      "Members": "SQLSERVICE, TSTARK, ADMINISTRATOR"
+      "Type": "Domain User",
+      "SAM": "library",
+      "Enabled": "Yes",
+      "Admin Count": "No"
     },
-    "flags": []
+    "flags": [
+      "critical"
+    ]
+  },
+  "joel_hurst": {
+    "id": "joel_hurst",
+    "label": "JOEL.HURST",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Joel.Hurst",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "lynda_bailey": {
+    "id": "lynda_bailey",
+    "label": "LYNDA.BAILEY",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Lynda.Bailey",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "nicola_lamb": {
+    "id": "nicola_lamb",
+    "label": "NICOLA.LAMB",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Nicola.Lamb",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "kieran_mitchell": {
+    "id": "kieran_mitchell",
+    "label": "KIERAN.MITCHELL",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Kieran.Mitchell",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "ryan_jenkins": {
+    "id": "ryan_jenkins",
+    "label": "RYAN.JENKINS",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Ryan.Jenkins",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "harry_shaw": {
+    "id": "harry_shaw",
+    "label": "HARRY.SHAW",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Harry.Shaw",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "carl_moore": {
+    "id": "carl_moore",
+    "label": "CARL.MOORE",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Carl.Moore",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "mohammed_harris": {
+    "id": "mohammed_harris",
+    "label": "MOHAMMED.HARRIS",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Mohammed.Harris",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "joan_jennings": {
+    "id": "joan_jennings",
+    "label": "JOAN.JENNINGS",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "Joan.Jennings",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
+    },
+    "flags": [
+      "da"
+    ]
+  },
+  "gpoadm": {
+    "id": "gpoadm",
+    "label": "GPOADM",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "gpoadm",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "krbtgt": {
+    "id": "krbtgt",
+    "label": "KRBTGT",
+    "type": "user_disabled",
+    "info": {
+      "Type": "Disabled Account",
+      "SAM": "krbtgt",
+      "Enabled": "No",
+      "Admin Count": "Yes",
+      "SPNs": "kadmin/changepw"
+    },
+    "flags": [
+      "disabled"
+    ]
+  },
+  "administrator": {
+    "id": "administrator",
+    "label": "ADMINISTRATOR",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "Administrator",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
+    },
+    "flags": [
+      "da"
+    ]
+  },
+  "guest": {
+    "id": "guest",
+    "label": "GUEST",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "Guest",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
   }
 };
 const edgeDefs = [
   {
-    "from": "pparker",
-    "to": "deagle",
-    "group": "localadmin",
-    "label": "LocalAdmin"
-  },
-  {
-    "from": "fcastle",
-    "to": "deagle",
-    "group": "localadmin",
-    "label": "LocalAdmin"
-  },
-  {
-    "from": "jsmith",
-    "to": "deagle",
-    "group": "localadmin",
-    "label": "LocalAdmin"
-  },
-  {
-    "from": "account_operators",
-    "to": "deagle",
+    "from": "gpoadm",
+    "to": "default_domain_policy",
     "group": "acl",
     "label": "GenericAll",
     "aclType": "GenericAll"
   },
   {
-    "from": "account_operators",
-    "to": "kira",
+    "from": "gpoadm",
+    "to": "default_domain_controllers_policy",
     "group": "acl",
     "label": "GenericAll",
     "aclType": "GenericAll"
   },
   {
-    "from": "administrator",
-    "to": "iccn",
-    "group": "localadmin",
-    "label": "LocalAdmin"
+    "from": "amelia_griffiths",
+    "to": "legacy",
+    "group": "memberof",
+    "label": "MemberOf"
   },
   {
-    "from": "tstark",
-    "to": "iccn",
-    "group": "localadmin",
-    "label": "LocalAdmin"
-  },
-  {
-    "from": "sqlservice",
-    "to": "iccn",
-    "group": "localadmin",
-    "label": "LocalAdmin"
+    "from": "nicola_lamb",
+    "to": "legacy",
+    "group": "memberof",
+    "label": "MemberOf"
   },
   {
     "from": "account_operators",
-    "to": "pparker",
-    "group": "acl",
-    "label": "GenericAll",
-    "aclType": "GenericAll"
-  },
-  {
-    "from": "helpdesk",
-    "to": "svc_backup",
+    "to": "legacy",
     "group": "acl",
     "label": "GenericAll",
     "aclType": "GenericAll",
     "critical": true
   },
   {
-    "from": "account_operators",
-    "to": "guest",
-    "group": "acl",
-    "label": "GenericAll",
-    "aclType": "GenericAll"
+    "from": "amelia_griffiths",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "joel_hurst",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "lynda_bailey",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "nicola_lamb",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "kieran_mitchell",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "ryan_jenkins",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "carl_moore",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "harry_shaw",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "mohammed_harris",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "joan_jennings",
+    "to": "office",
+    "group": "memberof",
+    "label": "MemberOf"
   },
   {
     "from": "account_operators",
-    "to": "jsmith",
+    "to": "office",
     "group": "acl",
     "label": "GenericAll",
-    "aclType": "GenericAll"
-  },
-  {
-    "from": "account_operators",
-    "to": "helpdesk",
-    "group": "acl",
-    "label": "GenericAll",
-    "aclType": "GenericAll"
-  },
-  {
-    "from": "helpdesk",
-    "to": "kira",
-    "group": "spn",
-    "label": "HasSPN"
-  },
-  {
-    "from": "account_operators",
-    "to": "fcastle",
-    "group": "acl",
-    "label": "GenericAll",
-    "aclType": "GenericAll"
-  },
-  {
-    "from": "pparker",
-    "to": "fcastle",
-    "group": "acl",
-    "label": "GenericWrite",
-    "aclType": "GenericWrite"
-  },
-  {
-    "from": "pparker",
-    "to": "fcastle",
-    "group": "acl",
-    "label": "ForceChangePassword",
-    "aclType": "ForceChangePassword"
+    "aclType": "GenericAll",
+    "critical": true
   },
   {
     "from": "account_operators",
@@ -705,43 +757,7 @@ const edgeDefs = [
     "critical": true
   },
   {
-    "from": "sqlservice",
-    "to": "enterprise_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "tstark",
-    "to": "enterprise_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "administrator",
-    "to": "enterprise_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "svc_backup",
-    "to": "domain_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "hawkeye",
-    "to": "domain_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "sqlservice",
-    "to": "domain_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "tstark",
+    "from": "joan_jennings",
     "to": "domain_admins",
     "group": "memberof",
     "label": "MemberOf"
@@ -753,14 +769,8 @@ const edgeDefs = [
     "label": "MemberOf"
   },
   {
-    "from": "sqlservice",
-    "to": "schema_admins",
-    "group": "memberof",
-    "label": "MemberOf"
-  },
-  {
-    "from": "tstark",
-    "to": "schema_admins",
+    "from": "administrator",
+    "to": "enterprise_admins",
     "group": "memberof",
     "label": "MemberOf"
   },
@@ -769,9 +779,118 @@ const edgeDefs = [
     "to": "schema_admins",
     "group": "memberof",
     "label": "MemberOf"
+  },
+  {
+    "from": "domain_admins",
+    "to": "administrators",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "enterprise_admins",
+    "to": "administrators",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "administrator",
+    "to": "administrators",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "account_operators",
+    "to": "library",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "joel_hurst",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "lynda_bailey",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "nicola_lamb",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "kieran_mitchell",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "ryan_jenkins",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "harry_shaw",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "carl_moore",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "mohammed_harris",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "gpoadm",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "legacy",
+    "to": "gpoadm",
+    "group": "acl",
+    "label": "WriteOwner",
+    "aclType": "WriteOwner"
+  },
+  {
+    "from": "legacy",
+    "to": "gpoadm",
+    "group": "acl",
+    "label": "WriteDacl",
+    "aclType": "WriteDacl"
+  },
+  {
+    "from": "account_operators",
+    "to": "guest",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
   }
 ];
-const attackPathIds = ["helpdesk", "svc_backup", "iccn"];
+const attackPathIds = ["nicola_lamb", "legacy", "gpoadm", "default_domain_policy"];
 
 // Show ADCS toggle if cert edges exist
 if (edgeDefs.some(e => e.group === 'cert')) {
@@ -791,6 +910,7 @@ function nodeStyle(type) {
     group:         { shape:'triangle', size:24, color:{background:'#1a0d33',border:'#bc8cff',highlight:{background:'#231044',border:'#d2a8ff'}}, font:{color:'#bc8cff',size:11,bold:true}, borderWidth:2 },
     ca:            { shape:'box',      size:18, color:{background:'#1a1040',border:'#bc8cff',highlight:{background:'#231054',border:'#d2a8ff'}}, font:{color:'#bc8cff',size:11,bold:true}, borderWidth:2 },
     cert_template: { shape:'diamond',  size:16, color:{background:'#3a1a40',border:'#bc8cff',highlight:{background:'#4a2050',border:'#e94560'}}, font:{color:'#e94560',size:10,bold:true}, borderWidth:1.5 },
+    gpo:           { shape:'diamond',  size:16, color:{background:'#0d2020',border:'#3fb950',highlight:{background:'#0f2d20',border:'#56d364'}}, font:{color:'#3fb950',size:10,bold:true}, borderWidth:1.5, borderDashes:[4,3] },
   };
   return s[type] || s['user'];
 }

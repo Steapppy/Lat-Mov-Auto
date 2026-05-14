@@ -65,7 +65,10 @@ def index_objects(sh):
             props = obj.get('Properties', obj)
             sid = (obj.get('ObjectIdentifier') or props.get('objectsid') or props.get('objectid') or '').upper()
             full_name = (props.get('name') or props.get('Name') or '').upper()
-            short = full_name.split('@')[0].split('.')[0]
+            # Users: JOEL.HURST@DOMAIN.LOCAL → JOEL.HURST (keep dots in username)
+            # Computers: DEAGLE.ICCN.LOCAL (no @) → DEAGLE (strip FQDN suffix)
+            before_at = full_name.split('@')[0]
+            short = before_at.split('.')[0] if '@' not in full_name else before_at
             if not sid or not short:
                 continue
             sid_map[sid] = {
@@ -143,7 +146,7 @@ def build_nodes(sid_map, recon_hosts, certipy_data):
 
     for sid, obj in sid_map.items():
         t = obj['type']
-        if t in ('ou', 'container', 'gpo'):
+        if t in ('ou', 'container'):
             continue
 
         props = obj['props']
@@ -193,6 +196,9 @@ def build_nodes(sid_map, recon_hosts, certipy_data):
         elif t == 'domain':
             info['Functional Level'] = props.get('functionallevel', 'Unknown')
             info['SID'] = sid
+        elif t == 'gpo':
+            info['GUID'] = props.get('gpcpath', props.get('guid', 'N/A'))
+            info['DN'] = props.get('distinguishedname', 'N/A')
 
         nodes.append({
             'id': safe_id(name),
@@ -266,7 +272,7 @@ def build_edges(sid_map, nodes):
         counter[0] += 1
 
     for sid, obj in sid_map.items():
-        if obj['type'] in ('ou', 'container', 'gpo', 'domain'):
+        if obj['type'] in ('ou', 'container', 'domain'):
             continue
         obj_vis = sid_to_vis.get(sid)
         if not obj_vis:
@@ -331,39 +337,59 @@ def compute_stats(sid_map, recon_hosts, edges):
 
 
 def find_attack_path(sid_map, nodes, edges):
-    """Return (banner_text, [vis_node_ids]) for the best critical ACL path."""
-    critical = [e for e in edges if e.get('critical')]
-    if not critical:
-        return None, []
+    """
+    BFS through ACL + MemberOf edges to find the longest meaningful
+    privilege-escalation chain from a non-privileged user to a DA/DC.
+    Returns (banner_text, [vis_node_ids]).
+    """
+    from collections import deque
 
-    id_to_name = {n['id']: n['label'] for n in nodes}
+    id_to_label = {n['id']: n['label'] for n in nodes}
+    id_to_type  = {n['id']: n['type']  for n in nodes}
 
-    e = critical[0]
-    attacker = id_to_name.get(e['from'], e['from'])
-    target = id_to_name.get(e['to'], e['to'])
+    # Adjacency: follow ACL and MemberOf edges forward
+    adj = {}
+    for e in edges:
+        if e['group'] in ('acl', 'memberof', 'localadmin'):
+            adj.setdefault(e['from'], []).append(e['to'])
 
-    # Find an entry computer where attacker is local admin
-    attacker_sid = next((obj['_sid'] if '_sid' in obj else None
-                         for obj in [n for n in nodes if n['id'] == e['from']]), None)
-    entry = None
-    if attacker_sid:
-        for obj in sid_map.values():
-            if obj['type'] not in ('dc', 'computer', 'workstation'):
-                continue
-            results = obj['raw'].get('LocalAdmins', {}).get('Results', [])
-            for r in results:
-                if r.get('ObjectIdentifier', '').upper() == attacker_sid:
-                    entry = obj['name']
-                    break
-            if entry:
+    # Destination: DA users, DCs, privileged groups, and GPOs (GenericAll on GPO = code exec on all machines it applies to)
+    _PRIV_GROUPS = {'DOMAIN ADMINS', 'ENTERPRISE ADMINS', 'ADMINISTRATORS'}
+    targets = {n['id'] for n in nodes
+               if n['type'] in ('user_da', 'dc', 'gpo')
+               or n['label'] in _PRIV_GROUPS}
+
+    # Sources: regular or disabled users (non-privileged starting points)
+    sources = [n['id'] for n in nodes if n['type'] in ('user', 'user_disabled')]
+
+    best_path = None
+    for start in sources:
+        queue = deque([[start]])
+        visited = {start}
+        while queue:
+            path = queue.popleft()
+            node = path[-1]
+            if node in targets:
+                # Prefer longer paths (more hops = more interesting chain)
+                if best_path is None or len(path) > len(best_path):
+                    best_path = path
                 break
+            for nb in adj.get(node, []):
+                if nb not in visited:
+                    visited.add(nb)
+                    queue.append(path + [nb])
 
-    dc = next((obj['name'] for obj in sid_map.values() if obj['type'] == 'dc'), None)
+    if not best_path:
+        # Fallback: just use the first critical edge
+        critical = [e for e in edges if e.get('critical')]
+        if not critical:
+            return None, []
+        e = critical[0]
+        best_path = [e['from'], e['to']]
 
-    path_names = list(filter(None, [entry, attacker, target, dc]))
-    path_ids = [safe_id(n) for n in path_names]
-    banner = ' → '.join(path_names) + f' ({e["label"]}) → DA → DCSync → Full Compromise'
-    return banner, path_ids
+    labels  = [id_to_label.get(n, n) for n in best_path]
+    banner  = ' -> '.join(labels) + ' -> Full Compromise'
+    return banner, best_path
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -844,6 +870,7 @@ function nodeStyle(type) {
     group:         { shape:'triangle', size:24, color:{background:'#1a0d33',border:'#bc8cff',highlight:{background:'#231044',border:'#d2a8ff'}}, font:{color:'#bc8cff',size:11,bold:true}, borderWidth:2 },
     ca:            { shape:'box',      size:18, color:{background:'#1a1040',border:'#bc8cff',highlight:{background:'#231054',border:'#d2a8ff'}}, font:{color:'#bc8cff',size:11,bold:true}, borderWidth:2 },
     cert_template: { shape:'diamond',  size:16, color:{background:'#3a1a40',border:'#bc8cff',highlight:{background:'#4a2050',border:'#e94560'}}, font:{color:'#e94560',size:10,bold:true}, borderWidth:1.5 },
+    gpo:           { shape:'diamond',  size:16, color:{background:'#0d2020',border:'#3fb950',highlight:{background:'#0f2d20',border:'#56d364'}}, font:{color:'#3fb950',size:10,bold:true}, borderWidth:1.5, borderDashes:[4,3] },
   };
   return s[type] || s['user'];
 }
