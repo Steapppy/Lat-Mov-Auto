@@ -154,13 +154,9 @@ def build_nodes(sid_map, recon_hosts, certipy_data):
             if name not in scanned:
                 continue
 
-        # ── Filter: groups — whitelist only, skip noise ──
+        # ── Filter: groups — skip known Windows noise, show everything else ──
         if t == 'group':
             if name in _SKIP_GROUPS:
-                continue
-            if name not in _WHITELIST_GROUPS:
-                # Keep non-whitelisted group only if it has LocalAdmin on a scanned computer
-                # (detected later via edges — skip here, add in post-pass if needed)
                 continue
 
         spns = props.get('serviceprincipalnames', [])
