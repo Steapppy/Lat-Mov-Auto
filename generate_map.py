@@ -1047,14 +1047,17 @@ function togglePhysics() {
 
 def main():
     parser = argparse.ArgumentParser(description='Generate network_map.html from recon + SharpHound [+ certipy]')
-    parser.add_argument('--recon',       required=True,  help='Recon JSON file')
+    parser.add_argument('--recon',       default=None,   help='Recon JSON file (optional)')
     parser.add_argument('--sharphound',  required=True,  help='SharpHound ZIP file')
     parser.add_argument('-c', '--certipy', default=None, help='Certipy JSON output (optional)')
     parser.add_argument('-o', '--output',  default='network_map.html', help='Output file (default: network_map.html)')
     args = parser.parse_args()
 
-    print(f'[*] Loading recon:      {args.recon}')
-    recon_hosts, subnet = load_recon(args.recon)
+    if args.recon:
+        print(f'[*] Loading recon:      {args.recon}')
+        recon_hosts, subnet = load_recon(args.recon)
+    else:
+        recon_hosts, subnet = [], ''
 
     print(f'[*] Loading SharpHound: {args.sharphound}')
     sh_data = load_sharphound(args.sharphound)
