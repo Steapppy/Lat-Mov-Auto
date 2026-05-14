@@ -1,0 +1,984 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICCN.LOCAL — Network Intelligence Report</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.9/standalone/umd/vis-network.min.js"></script>
+<style>
+  :root {
+    --bg-primary: #0d1117; --bg-secondary: #161b22; --bg-tertiary: #21262d;
+    --border: #30363d; --accent-red: #e94560; --accent-blue: #58a6ff;
+    --accent-orange: #f0883e; --accent-green: #3fb950;
+    --accent-purple: #bc8cff; --accent-yellow: #d29922;
+    --text-primary: #e6edf3; --text-secondary: #8b949e; --text-muted: #484f58;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg-primary); color: var(--text-primary); min-height: 100vh; }
+  .header { background: var(--bg-secondary); border-bottom: 1px solid var(--border); padding: 18px 32px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 100; }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .header-logo { width: 40px; height: 40px; background: linear-gradient(135deg, var(--accent-red), #b52040); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 800; color: #fff; letter-spacing: -1px; }
+  .header-title h1 { font-size: 18px; font-weight: 700; letter-spacing: 0.3px; }
+  .header-title p { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .header-meta { display: flex; align-items: center; gap: 20px; }
+  .meta-chip { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; padding: 4px 12px; font-size: 11px; color: var(--text-secondary); font-family: 'Courier New', monospace; }
+  .meta-chip span { color: var(--accent-blue); }
+  .badge-live { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--accent-green); font-weight: 600; }
+  .badge-live::before { content: ''; width: 7px; height: 7px; background: var(--accent-green); border-radius: 50%; box-shadow: 0 0 6px var(--accent-green); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .stats-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border-bottom: 1px solid var(--border); }
+  .stat-card { background: var(--bg-secondary); padding: 16px 24px; display: flex; align-items: center; gap: 14px; }
+  .stat-icon { width: 38px; height: 38px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .stat-icon.hosts { background: rgba(88,166,255,.15); } .stat-icon.users { background: rgba(63,185,80,.15); }
+  .stat-icon.kerb { background: rgba(210,153,34,.15); } .stat-icon.critical { background: rgba(233,69,96,.15); }
+  .stat-value { font-size: 26px; font-weight: 700; line-height: 1; }
+  .stat-card.hosts .stat-value { color: var(--accent-blue); } .stat-card.users .stat-value { color: var(--accent-green); }
+  .stat-card.kerb .stat-value { color: var(--accent-yellow); } .stat-card.critical .stat-value { color: var(--accent-red); }
+  .stat-label { font-size: 12px; color: var(--text-secondary); margin-top: 3px; }
+  .controls-bar { background: var(--bg-secondary); border-bottom: 1px solid var(--border); padding: 10px 24px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .controls-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-right: 4px; }
+  .toggle-btn { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 5px; border: 1px solid var(--border); background: var(--bg-tertiary); color: var(--text-secondary); font-size: 12px; cursor: pointer; transition: all 0.18s; }
+  .toggle-btn .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .toggle-btn.active { border-color: currentColor; }
+  .toggle-btn.active[data-group="memberof"] { color: #8b949e; background: rgba(139,148,158,.1); }
+  .toggle-btn.active[data-group="localadmin"] { color: var(--accent-orange); background: rgba(240,136,62,.1); }
+  .toggle-btn.active[data-group="acl"] { color: var(--accent-red); background: rgba(233,69,96,.1); }
+  .toggle-btn.active[data-group="spn"] { color: var(--accent-yellow); background: rgba(210,153,34,.1); }
+  .toggle-btn.active[data-group="cert"] { color: var(--accent-purple); background: rgba(188,140,255,.1); }
+  .sep { width: 1px; height: 22px; background: var(--border); margin: 0 4px; }
+  .action-btn { padding: 5px 14px; border-radius: 5px; border: 1px solid; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.18s; }
+  .btn-attack { border-color: var(--accent-red); background: rgba(233,69,96,.12); color: var(--accent-red); }
+  .btn-attack:hover { background: rgba(233,69,96,.25); }
+  .btn-reset { border-color: var(--border); background: var(--bg-tertiary); color: var(--text-secondary); }
+  .btn-reset:hover { background: var(--border); color: var(--text-primary); }
+  .btn-physics { border-color: var(--accent-blue); background: rgba(88,166,255,.08); color: var(--accent-blue); }
+  .btn-physics:hover { background: rgba(88,166,255,.2); }
+  .main-layout { display: grid; grid-template-columns: 1fr 280px; height: calc(100vh - 160px); min-height: 520px; }
+  .graph-wrapper { position: relative; border-right: 1px solid var(--border); height: 100%; min-height: 520px; }
+  #network-graph { width: 100%; height: 100%; min-height: 520px; background: var(--bg-primary); }
+  .graph-watermark { position: absolute; bottom: 14px; left: 18px; font-size: 10px; color: var(--text-muted); pointer-events: none; font-family: 'Courier New', monospace; }
+  .attack-path-banner { display: none; position: absolute; top: 12px; left: 50%; transform: translateX(-50%); background: rgba(233,69,96,.18); border: 1px solid var(--accent-red); border-radius: 6px; padding: 6px 18px; font-size: 12px; color: var(--accent-red); font-weight: 600; z-index: 10; animation: fadein 0.3s ease; }
+  @keyframes fadein { from { opacity: 0; transform: translateX(-50%) translateY(-6px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+  .sidebar { display: flex; flex-direction: column; overflow-y: auto; background: var(--bg-secondary); }
+  .panel { border-bottom: 1px solid var(--border); padding: 16px; }
+  .panel-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--text-muted); margin-bottom: 12px; font-weight: 600; }
+  .legend-section { margin-bottom: 12px; }
+  .legend-section-title { font-size: 10px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--text-muted); margin-bottom: 6px; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-secondary); margin-bottom: 5px; }
+  .legend-node { width: 14px; height: 14px; border-radius: 2px; flex-shrink: 0; }
+  .legend-node.circle { border-radius: 50%; }
+  .legend-edge { width: 28px; height: 2px; flex-shrink: 0; border-radius: 1px; }
+  .legend-edge.dashed { background: none !important; border-top: 2px dashed; }
+  .node-detail { flex: 1; padding: 16px; }
+  .node-detail .panel-title { margin-bottom: 14px; }
+  .detail-placeholder { text-align: center; padding: 32px 12px; color: var(--text-muted); font-size: 12px; }
+  .detail-placeholder .ph-icon { font-size: 32px; margin-bottom: 8px; opacity: 0.4; }
+  #detail-content { display: none; }
+  .detail-header { display: flex; align-items: flex-start; gap: 10px; margin-bottom: 14px; }
+  .detail-icon-wrap { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 18px; flex-shrink: 0; }
+  .detail-name { font-size: 15px; font-weight: 700; word-break: break-all; }
+  .detail-type { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+  .detail-row { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--border); padding: 7px 0; font-size: 12px; gap: 8px; }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-key { color: var(--text-muted); flex-shrink: 0; }
+  .detail-val { color: var(--text-primary); text-align: right; word-break: break-all; }
+  .flag-badges { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+  .flag-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .flag-da       { background: rgba(233,69,96,.2); color: var(--accent-red); border: 1px solid rgba(233,69,96,.4); }
+  .flag-kerb     { background: rgba(210,153,34,.2); color: #e3ad3b; border: 1px solid rgba(210,153,34,.4); }
+  .flag-disabled { background: rgba(139,148,158,.15); color: var(--text-secondary); border: 1px solid var(--border); }
+  .flag-local    { background: rgba(240,136,62,.2); color: var(--accent-orange); border: 1px solid rgba(240,136,62,.4); }
+  .flag-unconstrained { background: rgba(188,140,255,.2); color: var(--accent-purple); border: 1px solid rgba(188,140,255,.4); }
+  .flag-critical { background: rgba(233,69,96,.3); color: #ff6b85; border: 1px solid rgba(233,69,96,.6); animation: glow 2s infinite; }
+  .flag-vuln     { background: rgba(188,140,255,.2); color: var(--accent-purple); border: 1px solid rgba(188,140,255,.4); }
+  @keyframes glow { 0%,100% { box-shadow: 0 0 4px rgba(233,69,96,.4); } 50% { box-shadow: 0 0 10px rgba(233,69,96,.7); } }
+  .table-section { padding: 24px 32px; background: var(--bg-primary); border-top: 1px solid var(--border); }
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+  .section-title { font-size: 16px; font-weight: 700; }
+  .section-sub { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead tr { background: var(--bg-tertiary); }
+  th { padding: 10px 16px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--text-muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+  td { padding: 11px 16px; border-bottom: 1px solid var(--border); color: var(--text-secondary); vertical-align: middle; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover td { background: var(--bg-tertiary); }
+  .td-ip { font-family: 'Courier New', monospace; color: var(--accent-blue); }
+  .td-host { color: var(--text-primary); font-weight: 600; }
+  .port-chip { display: inline-block; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 3px; padding: 1px 6px; font-family: 'Courier New', monospace; font-size: 11px; color: var(--text-secondary); margin: 1px; }
+  .port-chip.highlight { border-color: var(--accent-orange); color: var(--accent-orange); }
+  .os-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; }
+  .os-icon { font-size: 14px; }
+  .role-dc { display: inline-block; background: rgba(233,69,96,.15); border: 1px solid rgba(233,69,96,.4); border-radius: 4px; padding: 1px 8px; font-size: 10px; font-weight: 700; color: var(--accent-red); text-transform: uppercase; letter-spacing: 0.5px; }
+  .role-ws { display: inline-block; background: rgba(88,166,255,.1); border: 1px solid rgba(88,166,255,.3); border-radius: 4px; padding: 1px 8px; font-size: 10px; font-weight: 700; color: var(--accent-blue); text-transform: uppercase; letter-spacing: 0.5px; }
+  .footer { background: var(--bg-secondary); border-top: 1px solid var(--border); padding: 12px 32px; display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--text-muted); }
+  .footer-brand { color: var(--accent-red); font-weight: 700; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg-primary); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #484f58; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-left">
+    <div class="header-logo">AD</div>
+    <div class="header-title">
+      <h1>ICCN.LOCAL &mdash; Network Intelligence Report</h1>
+      <p>Active Directory Attack Surface Analysis &bull; 2016</p>
+    </div>
+  </div>
+  <div class="header-meta">
+    <div class="meta-chip">Date: <span>2026-05-14</span></div>
+    <div class="meta-chip">Domain SID: <span>S-1-5-21-3431850111-3779057214-1162477026</span></div>
+    <div class="badge-live">ACTIVE</div>
+  </div>
+</header>
+
+<div class="stats-bar">
+  <div class="stat-card hosts">
+    <div class="stat-icon hosts">&#x1F5A5;&#xFE0F;</div>
+    <div><div class="stat-value">4</div><div class="stat-label">Hosts Discovered</div></div>
+  </div>
+  <div class="stat-card users">
+    <div class="stat-icon users">&#x1F464;</div>
+    <div><div class="stat-value">11</div><div class="stat-label">Domain Users</div></div>
+  </div>
+  <div class="stat-card kerb">
+    <div class="stat-icon kerb">&#x1F3AB;</div>
+    <div><div class="stat-value">2</div><div class="stat-label">Kerberoastable Accounts</div></div>
+  </div>
+  <div class="stat-card critical">
+    <div class="stat-icon critical">&#x26A0;&#xFE0F;</div>
+    <div><div class="stat-value">2</div><div class="stat-label">Critical ACL Paths</div></div>
+  </div>
+</div>
+
+<div class="controls-bar">
+  <span class="controls-label">Show Edges</span>
+  <button class="toggle-btn active" data-group="memberof" onclick="toggleGroup('memberof', this)">
+    <span class="dot" style="background:#8b949e"></span> MemberOf
+  </button>
+  <button class="toggle-btn active" data-group="localadmin" onclick="toggleGroup('localadmin', this)">
+    <span class="dot" style="background:#f0883e"></span> LocalAdmin
+  </button>
+  <button class="toggle-btn active" data-group="acl" onclick="toggleGroup('acl', this)">
+    <span class="dot" style="background:#e94560"></span> ACLs
+  </button>
+  <button class="toggle-btn active" data-group="spn" onclick="toggleGroup('spn', this)">
+    <span class="dot" style="background:#d29922"></span> Kerberoast SPN
+  </button>
+  <button class="toggle-btn active" data-group="cert" onclick="toggleGroup('cert', this)" id="certBtn" style="display:none">
+    <span class="dot" style="background:#bc8cff"></span> ADCS
+  </button>
+  <div class="sep"></div>
+  <button class="action-btn btn-attack" onclick="highlightAttackPath()">&#x26A1; Highlight Attack Path</button>
+  <button class="action-btn btn-reset" onclick="resetView()">&#x21BA; Reset View</button>
+  <button class="action-btn btn-physics" id="physicsBtn" onclick="togglePhysics()">&#x2699; Physics: ON</button>
+</div>
+
+<div class="main-layout">
+  <div class="graph-wrapper">
+    <div class="attack-path-banner" id="attackBanner">&#x26A1; HELPDESK → SVC_BACKUP → ICCN (GenericAll) → DA → DCSync → Full Compromise</div>
+    <div id="network-graph"></div>
+    <div class="graph-watermark">ICCN.LOCAL · 10.0.2.0/24 · vis-network 9.1.9</div>
+  </div>
+  <div class="sidebar">
+    <div class="panel">
+      <div class="panel-title">Legend</div>
+      <div class="legend-section">
+        <div class="legend-section-title">Node Types</div>
+        <div class="legend-item"><div class="legend-node" style="background:#e94560;border-radius:50%;border:2px solid #ff8fa3;width:16px;height:16px"></div> Domain Root</div>
+        <div class="legend-item"><div class="legend-node" style="background:#2a0a0a;border:2px solid #e94560"></div> Domain Controller</div>
+        <div class="legend-item"><div class="legend-node" style="background:#0d1f3a;border:2px solid #58a6ff"></div> Workstation</div>
+        <div class="legend-item"><div class="legend-node" style="background:#1c1c1c;border:2px solid #484f58"></div> Unknown Host</div>
+        <div class="legend-item"><div class="legend-node circle" style="background:#2d1200;border:2px solid #f0883e"></div> Domain Admin</div>
+        <div class="legend-item"><div class="legend-node circle" style="background:#0a1f12;border:2px solid #3fb950"></div> Standard User</div>
+        <div class="legend-item"><div class="legend-node circle" style="background:#141414;border:2px dashed #484f58"></div> Disabled Account</div>
+        <div class="legend-item"><div class="legend-node" style="clip-path:polygon(50% 0%,0% 100%,100% 100%);background:#1a0d33;border:none;width:16px;height:14px"></div> Security Group</div>
+        <div class="legend-item"><div class="legend-node" style="background:#1a0d33;border:2px solid #bc8cff"></div> CA / Template</div>
+      </div>
+      <div class="legend-section">
+        <div class="legend-section-title">Edge Types</div>
+        <div class="legend-item"><div class="legend-edge dashed" style="border-color:#8b949e;width:28px"></div> MemberOf</div>
+        <div class="legend-item"><div class="legend-edge" style="background:#f0883e"></div> LocalAdmin</div>
+        <div class="legend-item"><div class="legend-edge" style="background:#e94560;height:3px"></div> GenericAll (Critical)</div>
+        <div class="legend-item"><div class="legend-edge dashed" style="border-color:#e94560"></div> ForceChangePwd</div>
+        <div class="legend-item"><div class="legend-edge dashed" style="border-color:#f0883e"></div> GenericWrite</div>
+        <div class="legend-item"><div class="legend-edge" style="background:#d29922"></div> HasSPN (Kerberoast)</div>
+        <div class="legend-item"><div class="legend-edge dashed" style="border-color:#bc8cff"></div> ADCS</div>
+      </div>
+    </div>
+    <div class="node-detail">
+      <div class="panel-title">Node Details</div>
+      <div class="detail-placeholder" id="detail-placeholder">
+        <div class="ph-icon">&#x1F50D;</div>
+        Click any node to inspect details
+      </div>
+      <div id="detail-content">
+        <div class="detail-header">
+          <div class="detail-icon-wrap" id="d-icon"></div>
+          <div><div class="detail-name" id="d-name"></div><div class="detail-type" id="d-type"></div></div>
+        </div>
+        <div id="d-rows"></div>
+        <div class="flag-badges" id="d-flags"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="table-section">
+  <div class="section-header">
+    <div>
+      <div class="section-title">Network Topology</div>
+      <div class="section-sub">Discovered via port scan of 10.0.2.0/24</div>
+    </div>
+  </div>
+  <table>
+    <thead><tr><th>IP Address</th><th>Hostname</th><th>Role</th><th>Operating System</th><th>Open Ports</th><th>Services</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="td-ip">10.0.2.2</td>
+        <td class="td-host"><span style="color:var(--text-muted);font-style:italic">(unknown)</span></td>
+        <td><span style="color:var(--text-muted)">—</span></td>
+        <td><span class="os-icon">❓</span> Unknown</td>
+        <td><span class="port-chip">135</span><span class="port-chip">445</span></td>
+        <td>MSRPC, SMB</td>
+      </tr>
+      <tr>
+        <td class="td-ip">10.0.2.6</td>
+        <td class="td-host">Deagle.ICCN.local</td>
+        <td><span class="role-ws">Workstation</span></td>
+        <td><span class="os-icon">💻</span> Windows 10 Enterprise Evaluation</td>
+        <td><span class="port-chip">135</span><span class="port-chip">139</span><span class="port-chip">445</span><span class="port-chip highlight">5985</span></td>
+        <td>MSRPC, NetBIOS, SMB, WinRM-HTTP</td>
+      </tr>
+      <tr>
+        <td class="td-ip">10.0.2.8</td>
+        <td class="td-host">ICCN.ICCN.local</td>
+        <td><span class="role-dc">Domain Controller</span></td>
+        <td><span class="os-icon">🖥️</span> Windows Server 2019 Standard Evaluation</td>
+        <td><span class="port-chip">80</span><span class="port-chip">135</span><span class="port-chip">139</span><span class="port-chip">445</span><span class="port-chip highlight">5985</span></td>
+        <td>HTTP (Microsoft-IIS/10.0), MSRPC, NetBIOS, SMB, WinRM-HTTP · <strong style="color:var(--accent-purple)">Unconstrained Delegation</strong></td>
+      </tr>
+      <tr>
+        <td class="td-ip">10.0.2.14</td>
+        <td class="td-host">KIRA.ICCN.local</td>
+        <td><span class="role-ws">Workstation</span></td>
+        <td><span class="os-icon">💻</span> Windows 10 Enterprise Evaluation</td>
+        <td><span class="port-chip">135</span><span class="port-chip">139</span><span class="port-chip">445</span><span class="port-chip highlight">5985</span></td>
+        <td>MSRPC, NetBIOS, SMB, WinRM-HTTP</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+
+
+<footer class="footer">
+  <div>Generated by <span class="footer-brand">Lat-Mov-Auto</span> &bull; AI-powered lateral movement framework</div>
+  <div>ICCN.LOCAL &bull; 10.0.2.0/24 &bull; Scan date: 2026-05-14</div>
+</footer>
+
+<script>
+if (typeof vis === 'undefined') {
+  document.getElementById('network-graph').innerHTML =
+    '<div style="color:#e94560;padding:40px;font-family:monospace">vis-network failed to load from CDN. Check internet connection.</div>';
+}
+
+const nodeData = {
+  "deagle": {
+    "id": "deagle",
+    "label": "DEAGLE",
+    "type": "computer",
+    "info": {
+      "Type": "Computer",
+      "IP": "10.0.2.6",
+      "OS": "Windows 10 Enterprise Evaluation",
+      "FQDN": "DEAGLE.ICCN.LOCAL"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "kira": {
+    "id": "kira",
+    "label": "KIRA",
+    "type": "computer",
+    "info": {
+      "Type": "Computer",
+      "IP": "10.0.2.14",
+      "OS": "Windows 10 Enterprise Evaluation",
+      "FQDN": "KIRA.ICCN.LOCAL"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "iccn": {
+    "id": "iccn",
+    "label": "ICCN",
+    "type": "domain",
+    "info": {
+      "Type": "AD Domain",
+      "Functional Level": "2016",
+      "SID": "S-1-5-21-3431850111-3779057214-1162477026"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "pparker": {
+    "id": "pparker",
+    "label": "PPARKER",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "pparker",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "svc_backup": {
+    "id": "svc_backup",
+    "label": "SVC_BACKUP",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "svc_backup",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
+    },
+    "flags": [
+      "critical",
+      "da"
+    ]
+  },
+  "guest": {
+    "id": "guest",
+    "label": "GUEST",
+    "type": "user_disabled",
+    "info": {
+      "Type": "Disabled Account",
+      "SAM": "Guest",
+      "Enabled": "No",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical",
+      "disabled"
+    ]
+  },
+  "jsmith": {
+    "id": "jsmith",
+    "label": "JSMITH",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "jsmith",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "helpdesk": {
+    "id": "helpdesk",
+    "label": "HELPDESK",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "helpdesk",
+      "Enabled": "Yes",
+      "Admin Count": "No",
+      "SPNs": "HTTP/KIRA.ICCN.local"
+    },
+    "flags": [
+      "kerb",
+      "critical"
+    ]
+  },
+  "hawkeye": {
+    "id": "hawkeye",
+    "label": "HAWKEYE",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "hawkeye",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
+    },
+    "flags": [
+      "da"
+    ]
+  },
+  "administrator": {
+    "id": "administrator",
+    "label": "ADMINISTRATOR",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "Administrator",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
+    },
+    "flags": [
+      "da"
+    ]
+  },
+  "sqlservice": {
+    "id": "sqlservice",
+    "label": "SQLSERVICE",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "SQLService",
+      "Enabled": "Yes",
+      "Admin Count": "Yes",
+      "SPNs": "ICCN/SQLService.iccn.local:60111"
+    },
+    "flags": [
+      "kerb",
+      "da"
+    ]
+  },
+  "tstark": {
+    "id": "tstark",
+    "label": "TSTARK",
+    "type": "user_da",
+    "info": {
+      "Type": "Domain Admin",
+      "SAM": "tstark",
+      "Enabled": "Yes",
+      "Admin Count": "Yes"
+    },
+    "flags": [
+      "da"
+    ]
+  },
+  "krbtgt": {
+    "id": "krbtgt",
+    "label": "KRBTGT",
+    "type": "user_disabled",
+    "info": {
+      "Type": "Disabled Account",
+      "SAM": "krbtgt",
+      "Enabled": "No",
+      "Admin Count": "Yes",
+      "SPNs": "kadmin/changepw"
+    },
+    "flags": [
+      "disabled"
+    ]
+  },
+  "fcastle": {
+    "id": "fcastle",
+    "label": "FCASTLE",
+    "type": "user",
+    "info": {
+      "Type": "Domain User",
+      "SAM": "fcastle",
+      "Enabled": "Yes",
+      "Admin Count": "No"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "server_operators": {
+    "id": "server_operators",
+    "label": "SERVER OPERATORS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
+  "backup_operators": {
+    "id": "backup_operators",
+    "label": "BACKUP OPERATORS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
+  "account_operators": {
+    "id": "account_operators",
+    "label": "ACCOUNT OPERATORS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
+  "print_operators": {
+    "id": "print_operators",
+    "label": "PRINT OPERATORS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
+  "dnsadmins": {
+    "id": "dnsadmins",
+    "label": "DNSADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": [
+      "critical"
+    ]
+  },
+  "administrators": {
+    "id": "administrators",
+    "label": "ADMINISTRATORS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "(none)"
+    },
+    "flags": []
+  },
+  "enterprise_admins": {
+    "id": "enterprise_admins",
+    "label": "ENTERPRISE ADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "SQLSERVICE, TSTARK, ADMINISTRATOR"
+    },
+    "flags": []
+  },
+  "domain_admins": {
+    "id": "domain_admins",
+    "label": "DOMAIN ADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "SVC_BACKUP, HAWKEYE, SQLSERVICE, TSTARK, ADMINISTRATOR"
+    },
+    "flags": []
+  },
+  "schema_admins": {
+    "id": "schema_admins",
+    "label": "SCHEMA ADMINS",
+    "type": "group",
+    "info": {
+      "Type": "Security Group",
+      "Members": "SQLSERVICE, TSTARK, ADMINISTRATOR"
+    },
+    "flags": []
+  }
+};
+const edgeDefs = [
+  {
+    "from": "pparker",
+    "to": "deagle",
+    "group": "localadmin",
+    "label": "LocalAdmin"
+  },
+  {
+    "from": "fcastle",
+    "to": "deagle",
+    "group": "localadmin",
+    "label": "LocalAdmin"
+  },
+  {
+    "from": "jsmith",
+    "to": "deagle",
+    "group": "localadmin",
+    "label": "LocalAdmin"
+  },
+  {
+    "from": "account_operators",
+    "to": "deagle",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "kira",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "administrator",
+    "to": "iccn",
+    "group": "localadmin",
+    "label": "LocalAdmin"
+  },
+  {
+    "from": "tstark",
+    "to": "iccn",
+    "group": "localadmin",
+    "label": "LocalAdmin"
+  },
+  {
+    "from": "sqlservice",
+    "to": "iccn",
+    "group": "localadmin",
+    "label": "LocalAdmin"
+  },
+  {
+    "from": "account_operators",
+    "to": "pparker",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "helpdesk",
+    "to": "svc_backup",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll",
+    "critical": true
+  },
+  {
+    "from": "account_operators",
+    "to": "guest",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "jsmith",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "account_operators",
+    "to": "helpdesk",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "helpdesk",
+    "to": "kira",
+    "group": "spn",
+    "label": "HasSPN"
+  },
+  {
+    "from": "account_operators",
+    "to": "fcastle",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll"
+  },
+  {
+    "from": "pparker",
+    "to": "fcastle",
+    "group": "acl",
+    "label": "GenericWrite",
+    "aclType": "GenericWrite"
+  },
+  {
+    "from": "pparker",
+    "to": "fcastle",
+    "group": "acl",
+    "label": "ForceChangePassword",
+    "aclType": "ForceChangePassword"
+  },
+  {
+    "from": "account_operators",
+    "to": "dnsadmins",
+    "group": "acl",
+    "label": "GenericAll",
+    "aclType": "GenericAll",
+    "critical": true
+  },
+  {
+    "from": "sqlservice",
+    "to": "enterprise_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "tstark",
+    "to": "enterprise_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "administrator",
+    "to": "enterprise_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "svc_backup",
+    "to": "domain_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "hawkeye",
+    "to": "domain_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "sqlservice",
+    "to": "domain_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "tstark",
+    "to": "domain_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "administrator",
+    "to": "domain_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "sqlservice",
+    "to": "schema_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "tstark",
+    "to": "schema_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  },
+  {
+    "from": "administrator",
+    "to": "schema_admins",
+    "group": "memberof",
+    "label": "MemberOf"
+  }
+];
+const attackPathIds = ["helpdesk", "svc_backup", "iccn"];
+
+// Show ADCS toggle if cert edges exist
+if (edgeDefs.some(e => e.group === 'cert')) {
+  document.getElementById('certBtn').style.display = '';
+}
+
+function nodeStyle(type) {
+  const s = {
+    domain:        { shape:'star',     size:34, color:{background:'#e94560',border:'#ff8fa3',highlight:{background:'#ff2a4a',border:'#fff'}}, font:{color:'#fff',size:13,bold:true}, borderWidth:3 },
+    dc:            { shape:'box',      size:20, color:{background:'#2a0a0a',border:'#e94560',highlight:{background:'#3d0f0f',border:'#ff6b85'}}, font:{color:'#ff8fa3',size:12,bold:true}, borderWidth:2 },
+    workstation:   { shape:'box',      size:20, color:{background:'#0d1f3a',border:'#58a6ff',highlight:{background:'#1a3458',border:'#79c0ff'}}, font:{color:'#79c0ff',size:12,bold:true}, borderWidth:2 },
+    computer:      { shape:'box',      size:18, color:{background:'#0d1f3a',border:'#58a6ff',highlight:{background:'#1a3458',border:'#79c0ff'}}, font:{color:'#79c0ff',size:11}, borderWidth:1.5 },
+    unknown:       { shape:'box',      size:16, color:{background:'#1c1c1c',border:'#484f58',highlight:{background:'#252525',border:'#6e7681'}}, font:{color:'#8b949e',size:11}, borderWidth:1, borderDashes:[4,3] },
+    user_da:       { shape:'ellipse',  size:18, color:{background:'#2d1200',border:'#f0883e',highlight:{background:'#3d1800',border:'#ffa05c'}}, font:{color:'#f0883e',size:11,bold:true}, borderWidth:2 },
+    user:          { shape:'ellipse',  size:16, color:{background:'#0a1f12',border:'#3fb950',highlight:{background:'#0f2d1c',border:'#56d364'}}, font:{color:'#3fb950',size:11}, borderWidth:1.5 },
+    user_disabled: { shape:'ellipse',  size:14, color:{background:'#141414',border:'#484f58',highlight:{background:'#1c1c1c',border:'#6e7681'}}, font:{color:'#484f58',size:10}, borderWidth:1, borderDashes:[4,3] },
+    group:         { shape:'triangle', size:24, color:{background:'#1a0d33',border:'#bc8cff',highlight:{background:'#231044',border:'#d2a8ff'}}, font:{color:'#bc8cff',size:11,bold:true}, borderWidth:2 },
+    ca:            { shape:'box',      size:18, color:{background:'#1a1040',border:'#bc8cff',highlight:{background:'#231054',border:'#d2a8ff'}}, font:{color:'#bc8cff',size:11,bold:true}, borderWidth:2 },
+    cert_template: { shape:'diamond',  size:16, color:{background:'#3a1a40',border:'#bc8cff',highlight:{background:'#4a2050',border:'#e94560'}}, font:{color:'#e94560',size:10,bold:true}, borderWidth:1.5 },
+  };
+  return s[type] || s['user'];
+}
+
+function edgeStyle(def) {
+  const base = {
+    arrows: { to: { enabled:true, scaleFactor:0.6, type:'arrow' } },
+    smooth: { type:'curvedCW', roundness:0.2 },
+    selectionWidth: 2, hoverWidth: 1,
+    font: { size:9, color:'#8b949e', strokeWidth:2, strokeColor:'#0d1117', align:'horizontal' },
+    labelHighlightBold: true,
+  };
+  if (def.group === 'memberof')   return {...base, color:{color:'#484f58',highlight:'#8b949e',hover:'#6e7681'}, dashes:[5,4], width:1, font:{...base.font,color:'#484f58'}};
+  if (def.group === 'localadmin') return {...base, color:{color:'#b86020',highlight:'#f0883e',hover:'#f0883e'}, width:2};
+  if (def.group === 'spn')        return {...base, color:{color:'#a07010',highlight:'#d29922',hover:'#d29922'}, width:1.5, font:{...base.font,color:'#d29922'}};
+  if (def.group === 'cert')       return {...base, color:{color:'#7a4ab0',highlight:'#bc8cff',hover:'#bc8cff'}, dashes:[5,4], width:1.5, font:{...base.font,color:'#bc8cff'}};
+  if (def.group === 'acl') {
+    const t = def.aclType;
+    if (t === 'GenericAll') {
+      const crit = def.critical;
+      return {...base, color:{color:crit?'#e94560':'#b52040',highlight:'#ff2a4a',hover:'#ff2a4a'}, width:crit?3:2, font:{...base.font,color:'#e94560',size:10,bold:true}, smooth:{type:'curvedCW',roundness:0.3}};
+    }
+    if (t === 'ForceChangePassword') return {...base, color:{color:'#c02040',highlight:'#e94560',hover:'#e94560'}, dashes:[6,3], width:2, font:{...base.font,color:'#e94560'}};
+    if (t === 'GenericWrite')   return {...base, color:{color:'#b86020',highlight:'#f0883e',hover:'#f0883e'}, dashes:[5,4], width:2, font:{...base.font,color:'#f0883e'}};
+    if (t === 'AddMember')      return {...base, color:{color:'#c04020',highlight:'#f06040',hover:'#f06040'}, dashes:[4,4], width:1.5};
+    return {...base, color:{color:'#b52040',highlight:'#e94560',hover:'#e94560'}, width:1.5};
+  }
+  return base;
+}
+
+function buildTooltip(d) {
+  const rows = Object.entries(d.info).map(([k,v]) =>
+    `<tr><td style="color:#8b949e;padding:2px 8px 2px 0;white-space:nowrap">${k}</td><td style="color:#e6edf3;padding:2px 0">${v}</td></tr>`
+  ).join('');
+  const flagStr = (d.flags||[]).join(', ').toUpperCase() || '—';
+  return `<div style="background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px 14px;font-size:12px;font-family:Segoe UI,sans-serif;max-width:340px;box-shadow:0 4px 24px rgba(0,0,0,.5)">
+    <div style="font-weight:700;color:#e6edf3;margin-bottom:8px;font-size:13px">${d.label.replace(/\n/g,' ')}</div>
+    <table style="border-collapse:collapse">${rows}</table>
+    ${d.flags&&d.flags.length?`<div style="margin-top:8px;font-size:10px;color:#f0883e;font-weight:600;text-transform:uppercase">Flags: ${flagStr}</div>`:''}
+  </div>`;
+}
+
+// Build vis nodes
+const visNodes = [];
+for (const [id, d] of Object.entries(nodeData)) {
+  const s = nodeStyle(d.type);
+  visNodes.push({
+    id, label: d.label, title: buildTooltip(d),
+    shape: s.shape, size: s.size, color: s.color,
+    font: {...s.font, multi: false},
+    borderWidth: s.borderWidth,
+    borderWidthSelected: (s.borderWidth||1)+1,
+    shapeProperties: s.borderDashes ? {borderDashes: s.borderDashes} : {},
+    _data: d,
+  });
+}
+
+// Build vis edges
+let edgeIdCounter = 1;
+const allEdges = edgeDefs.map(def => ({
+  id: edgeIdCounter++, from: def.from, to: def.to,
+  label: def.label, group: def.group,
+  _critical: def.critical||false, _aclType: def.aclType||null,
+  ...edgeStyle(def),
+}));
+
+const container = document.getElementById('network-graph');
+const nodes = new vis.DataSet(visNodes);
+const edges = new vis.DataSet(allEdges);
+
+const options = {
+  physics: {
+    enabled: true,
+    solver: 'forceAtlas2Based',
+    forceAtlas2Based: { gravitationalConstant:-45, centralGravity:0.01, springLength:130, springConstant:0.06, damping:0.6, avoidOverlap:1.0 },
+    stabilization: { enabled:true, iterations:500, updateInterval:25, fit:true },
+    minVelocity: 1.0,
+  },
+  interaction: { hover:true, tooltipDelay:100, zoomView:true, dragNodes:true },
+  nodes: { borderWidth:2, shadow:{enabled:true,color:'rgba(0,0,0,0.5)',size:8,x:2,y:2}, chosen:true },
+  edges: { shadow:{enabled:false}, chosen:true },
+  layout: { randomSeed: 42 },
+};
+
+const network = new vis.Network(container, { nodes, edges }, options);
+
+// Lock physics off as soon as stabilization completes — prevents perpetual rotation
+network.on('stabilizationIterationsDone', () => {
+  network.setOptions({ physics: { enabled: false } });
+  document.getElementById('physicsBtn').textContent = '⚙ Physics: OFF';
+  network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+});
+// Safety fallback: force-stop after 4s regardless
+setTimeout(() => {
+  network.setOptions({ physics: { enabled: false } });
+  document.getElementById('physicsBtn').textContent = '⚙ Physics: OFF';
+}, 4000);
+
+// ── CONTROLS ──────────────────────────────────────────────────────────────────
+
+const flagLabels = {
+  da:            { cls:'flag-da',            text:'Domain Admin' },
+  kerb:          { cls:'flag-kerb',          text:'Kerberoastable' },
+  disabled:      { cls:'flag-disabled',      text:'Disabled' },
+  local:         { cls:'flag-local',         text:'Local Admin' },
+  unconstrained: { cls:'flag-unconstrained', text:'Unconstrained Delegation' },
+  critical:      { cls:'flag-critical',      text:'CRITICAL PATH' },
+  vuln:          { cls:'flag-vuln',          text:'Vulnerable' },
+  entry:         { cls:'flag-da',            text:'Entry Point' },
+};
+const typeIcons = {
+  domain: {icon:'🌐', bg:'rgba(233,69,96,.2)'}, dc: {icon:'🖥️', bg:'rgba(233,69,96,.15)'},
+  workstation: {icon:'💻', bg:'rgba(88,166,255,.15)'}, computer: {icon:'💻', bg:'rgba(88,166,255,.15)'},
+  unknown: {icon:'❓', bg:'rgba(72,79,88,.2)'},
+  user_da: {icon:'👑', bg:'rgba(240,136,62,.2)'}, user: {icon:'👤', bg:'rgba(63,185,80,.15)'},
+  user_disabled: {icon:'🔒', bg:'rgba(72,79,88,.2)'}, group: {icon:'👥', bg:'rgba(188,140,255,.2)'},
+  ca: {icon:'🏛️', bg:'rgba(188,140,255,.2)'}, cert_template: {icon:'📄', bg:'rgba(233,69,96,.15)'},
+};
+
+network.on('click', params => {
+  if (!params.nodes.length) return;
+  const n = nodes.get(params.nodes[0]);
+  if (!n || !n._data) return;
+  const d = n._data;
+  document.getElementById('detail-placeholder').style.display = 'none';
+  document.getElementById('detail-content').style.display = 'block';
+  const ti = typeIcons[d.type] || {icon:'?', bg:'rgba(72,79,88,.2)'};
+  const iconEl = document.getElementById('d-icon');
+  iconEl.textContent = ti.icon;
+  iconEl.style.background = ti.bg;
+  document.getElementById('d-name').textContent = d.label.replace(/\n/g,' ');
+  document.getElementById('d-type').textContent = d.info.Type || d.type;
+  const rowsEl = document.getElementById('d-rows');
+  rowsEl.innerHTML = Object.entries(d.info).map(([k,v]) =>
+    `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`
+  ).join('');
+  const flagsEl = document.getElementById('d-flags');
+  flagsEl.innerHTML = (d.flags||[]).map(f => {
+    const fl = flagLabels[f] || {cls:'flag-disabled', text:f};
+    return `<span class="flag-badge ${fl.cls}">${fl.text}</span>`;
+  }).join('');
+});
+
+function toggleGroup(group, btn) {
+  btn.classList.toggle('active');
+  const show = btn.classList.contains('active');
+  const toUpdate = allEdges.filter(e => e.group === group).map(e => ({...e, hidden: !show}));
+  edges.update(toUpdate);
+}
+
+let attackHighlighted = false;
+function highlightAttackPath() {
+  if (!attackPathIds.length) { alert('No critical attack path detected in this dataset.'); return; }
+  attackHighlighted = !attackHighlighted;
+  document.getElementById('attackBanner').style.display = attackHighlighted ? 'block' : 'none';
+  if (attackHighlighted) {
+    const pathSet = new Set(attackPathIds);
+    const onPath = e => pathSet.has(e.from) && pathSet.has(e.to);
+    nodes.update(visNodes.map(n => ({
+      id: n.id,
+      opacity: pathSet.has(n.id) ? 1.0 : 0.15,
+    })));
+    edges.update(allEdges.map(e => ({
+      id: e.id,
+      hidden: !onPath(e),
+      width: onPath(e) ? 4 : e.width,
+    })));
+    network.fit({ nodes: attackPathIds, animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+  } else {
+    nodes.update(visNodes.map(n => ({id: n.id, opacity: 1.0})));
+    edges.update(allEdges.map(e => ({id: e.id, hidden: false, width: e.width})));
+  }
+}
+
+function resetView() {
+  attackHighlighted = false;
+  document.getElementById('attackBanner').style.display = 'none';
+  nodes.update(visNodes.map(n => ({id: n.id, opacity: 1.0})));
+  edges.update(allEdges.map(e => ({id: e.id, opacity: 1.0, width: e.width})));
+  network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+}
+
+let physicsOn = false;
+function togglePhysics() {
+  physicsOn = !physicsOn;
+  network.setOptions({ physics: { enabled: physicsOn } });
+  document.getElementById('physicsBtn').textContent = '⚙ Physics: ' + (physicsOn ? 'ON' : 'OFF');
+}
+</script>
+</body>
+</html>
