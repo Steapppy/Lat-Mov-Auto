@@ -170,7 +170,7 @@ def build_nodes(sid_map, recon_hosts, certipy_data):
         if props.get('unconstraineddelegation'):
             flags.append('unconstrained')
         for ace in obj['aces']:
-            if ace.get('RightName') == 'GenericAll' and not ace.get('IsInherited', False):
+            if ace.get('RightName') == 'GenericAll':
                 flags.append('critical')
                 break
 
@@ -295,7 +295,7 @@ def build_edges(sid_map, nodes):
         # Skip ACEs where the principal is DA/EA/Administrators — they have rights on everything by default
         for ace in obj['aces']:
             right = ace.get('RightName', '')
-            if right not in _ACL_RIGHTS or ace.get('IsInherited', False):
+            if right not in _ACL_RIGHTS:
                 continue
             p_sid = ace.get('PrincipalSID', '').upper()
             p_vis = sid_to_vis.get(p_sid)
