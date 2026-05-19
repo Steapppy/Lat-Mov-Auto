@@ -1,0 +1,7 @@
+.venv/
+.env
+__pycache__/
+*.pyc
+*.db/
+*.log
+long_test_results.txt

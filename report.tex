@@ -1,0 +1,481 @@
+
+\documentclass[11pt,a4paper]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[a4paper, top=2.5cm, bottom=2.5cm, left=2.2cm, right=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{colortbl}
+\usepackage{multirow}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{mdframed}
+\usepackage{tcolorbox}
+\usepackage{listings}
+\usepackage{hyperref}
+\usepackage{parskip}
+\usepackage{setspace}
+\usepackage{calc}
+
+\tcbuselibrary{skins, breakable}
+
+% ── Colours ───────────────────────────────────────────────────────────────────
+\definecolor{dark}{HTML}{111827}
+\definecolor{accent}{HTML}{1A56DB}
+\definecolor{accentdark}{HTML}{0E3FA3}
+\definecolor{mid}{HTML}{374151}
+\definecolor{light}{HTML}{6B7280}
+\definecolor{borderclr}{HTML}{E5E7EB}
+\definecolor{bgsoft}{HTML}{F9FAFB}
+\definecolor{bgblue}{HTML}{EFF6FF}
+\definecolor{bggreen}{HTML}{ECFDF5}
+\definecolor{bgyellow}{HTML}{FFFBEB}
+\definecolor{bgred}{HTML}{FEF2F2}
+\definecolor{green}{HTML}{065F46}
+\definecolor{yellow}{HTML}{92400E}
+\definecolor{red}{HTML}{991B1B}
+\definecolor{codebg}{HTML}{1E293B}
+\definecolor{codefg}{HTML}{E2E8F0}
+\definecolor{codegreen}{HTML}{86EFAC}
+\definecolor{codeblue}{HTML}{7DD3FC}
+
+% ── Hyperref ──────────────────────────────────────────────────────────────────
+\hypersetup{
+    colorlinks=false,
+    pdfborder={0 0 0},
+    pdftitle={Lat-Mov-Auto Project Report},
+    pdfauthor={Lat-Mov-Auto Team}
+}
+
+% ── Typography ─────────────────────────────────────────────────────────────────
+\setlength{\parskip}{6pt}
+\setlength{\parindent}{0pt}
+\color{mid}
+
+% ── Section styling ───────────────────────────────────────────────────────────
+\titleformat{\section}{\color{white}}{}{0pt}{%
+    \colorbox{dark}{\parbox{\dimexpr\linewidth-2\fboxsep\relax}{%
+        \color{white}\bfseries\large\hspace{4pt}##1\hspace{4pt}%
+    }}%
+}
+\titlespacing{\section}{0pt}{18pt}{8pt}
+
+\titleformat{\subsection}{\color{accentdark}\bfseries\normalsize}{}{0pt}{##1}
+\titlespacing{\subsection}{0pt}{12pt}{4pt}
+
+\titleformat{\subsubsection}{\color{dark}\bfseries\small}{}{0pt}{##1}
+\titlespacing{\subsubsection}{0pt}{8pt}{2pt}
+
+% ── Header / Footer ───────────────────────────────────────────────────────────
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0pt}
+\fancyhead[L]{\colorbox{dark}{\color{white}\small\bfseries\hspace{4pt}LAT-MOV-AUTO\hspace{4pt}}}
+\fancyhead[R]{\small\color{light} Project Documentation Report --- April 2026}
+\fancyfoot[L]{\small\color{light} Confidential --- Internal Use Only}
+\fancyfoot[R]{\small\color{light} Page \thepage}
+\renewcommand{\footrulewidth}{0.4pt}
+\renewcommand{\footrule}{\color{borderclr}\hrule width\headwidth height\footrulewidth}
+
+% ── Code listings ─────────────────────────────────────────────────────────────
+\lstset{
+    backgroundcolor=\color{codebg},
+    basicstyle=\color{codefg}\ttfamily\small,
+    keywordstyle=\color{codeblue},
+    commentstyle=\color{light},
+    stringstyle=\color{codegreen},
+    breaklines=true,
+    frame=none,
+    xleftmargin=10pt,
+    xrightmargin=10pt,
+    aboveskip=8pt,
+    belowskip=8pt,
+    rulecolor=\color{codebg},
+    framexleftmargin=8pt,
+    framexrightmargin=8pt,
+    framextopmargin=6pt,
+    framexbottommargin=6pt,
+}
+
+% ── Info boxes ────────────────────────────────────────────────────────────────
+\tcbset{
+    infobox/.style={
+        colback=bgblue, colframe=accent, arc=3pt,
+        leftrule=3pt, toprule=0.4pt, bottomrule=0.4pt, rightrule=0.4pt,
+        left=8pt, right=8pt, top=6pt, bottom=6pt,
+        fontupper=\small\color{mid}
+    },
+    warnbox/.style={
+        colback=bgyellow, colframe=yellow, arc=3pt,
+        leftrule=3pt, toprule=0.4pt, bottomrule=0.4pt, rightrule=0.4pt,
+        left=8pt, right=8pt, top=6pt, bottom=6pt,
+        fontupper=\small\color{mid}
+    },
+    successbox/.style={
+        colback=bggreen, colframe=green, arc=3pt,
+        leftrule=3pt, toprule=0.4pt, bottomrule=0.4pt, rightrule=0.4pt,
+        left=8pt, right=8pt, top=6pt, bottom=6pt,
+        fontupper=\small\color{mid}
+    },
+}
+
+% ── Pill macros ───────────────────────────────────────────────────────────────
+\newcommand{\pillbuilt}{\colorbox{bggreen}{\color{green}\bfseries\tiny\ Built\ }}
+\newcommand{\pillplanned}{\colorbox{bgyellow}{\color{yellow}\bfseries\tiny\ Planned\ }}
+\newcommand{\pillinprogress}{\colorbox{bgblue}{\color{accentdark}\bfseries\tiny\ In Progress\ }}
+\newcommand{\pilllow}{\colorbox{bggreen}{\color{green}\bfseries\tiny\ Low\ }}
+\newcommand{\pillmedium}{\colorbox{bgyellow}{\color{yellow}\bfseries\tiny\ Medium\ }}
+
+% ── Table helpers ─────────────────────────────────────────────────────────────
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+
+\newcommand{\theadrow}{\rowcolor{dark}\color{white}\bfseries}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% COVER PAGE
+% ══════════════════════════════════════════════════════════════════════════════
+\thispagestyle{empty}
+
+\vspace*{3cm}
+
+{\color{accent}\rule{\linewidth}{3pt}}
+
+\vspace{0.4cm}
+
+{\small\bfseries\color{accent}\MakeUppercase{Project Documentation Report --- Internal Review}}
+
+\vspace{0.3cm}
+
+{\Huge\bfseries\color{dark} Lat-Mov-Auto}
+
+\vspace{0.2cm}
+
+{\Large\color{mid} AI-Assisted Lateral Movement Automation Framework}
+
+\vspace{0.8cm}
+
+\begin{tabularx}{\linewidth}{|X|X|X|X|}
+\hline
+\cellcolor{bgsoft}\small\textbf{\color{dark}Date} &
+\cellcolor{bgsoft}\small\textbf{\color{dark}Project} &
+\cellcolor{bgsoft}\small\textbf{\color{dark}Status} &
+\cellcolor{bgsoft}\small\textbf{\color{dark}Classification} \\
+\hline
+\cellcolor{bgsoft}\small April 2026 &
+\cellcolor{bgsoft}\small Lat-Mov-Auto &
+\cellcolor{bgsoft}\small Active Development &
+\cellcolor{bgsoft}\small Confidential \\
+\hline
+\end{tabularx}
+
+\vspace{0.3cm}
+{\color{borderclr}\rule{\linewidth}{0.5pt}}
+
+\newpage
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 1. EXECUTIVE SUMMARY
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Executive Summary}
+
+\begin{tcolorbox}[infobox]
+Lat-Mov-Auto is an end-of-studies internship project building a proof-of-concept Command \& Control (C2) framework focused on automating lateral movement techniques within Active Directory environments. The framework demonstrates the full attack lifecycle --- from initial reconnaissance to credential harvesting and authenticated remote execution --- using only native Windows protocols.
+\end{tcolorbox}
+
+\vspace{4pt}
+
+The project consists of three main components: a lightweight C\# agent deployed on compromised hosts, a Python FastAPI C2 server managing agents and storing loot, and an operator CLI used to issue commands, run modules, and analyse results. The framework integrates with \textbf{n8n} for automated event notifications and is designed to be extensible with new post-exploitation modules.
+
+As of April 2026, the core framework is operational and has been tested in a controlled lab environment. The authentication module --- the central focus of recent development --- is fully functional with automatic service detection, credential sweeping, credential spraying, and remote command execution capabilities.
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 2. ARCHITECTURE
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Architecture Overview}
+
+\subsection{Component Breakdown}
+
+\vspace{4pt}
+\begin{tabularx}{\linewidth}{L{2.8cm} L{3.8cm} X}
+\toprule
+\theadrow Component & Technology & Role \\
+\midrule
+\textbf{C2 Server}    & Python 3 / FastAPI / SQLite       & Central hub --- task queue, result storage, credential DB, loot files \\
+\rowcolor{bgsoft}
+\textbf{Agent}        & C\# / .NET 10 / Single-file EXE   & Deployed on targets --- beacons, executes tasks, returns results \\
+\textbf{Operator CLI} & Python 3                          & Interactive REPL for issuing commands and viewing results \\
+\rowcolor{bgsoft}
+\textbf{n8n}          & n8n Webhooks                      & Fire-and-forget event notifications (new agent, task result, upload) \\
+\textbf{Database}     & SQLite (\texttt{loot.db})         & Persists agents, tasks, results, hosts, credentials, tunnels \\
+\bottomrule
+\end{tabularx}
+
+\subsection{Communication Flow}
+
+\begin{lstlisting}
+Agent  --(HTTPS beacon / POST /checkin)-->  C2 Server  <--  Operator CLI
+       <--(task: type + instruction)------  C2 Server
+       --(POST /result: output)---------->  C2 Server  -->  n8n Webhook
+                                                |
+                                            loot.db (SQLite)
+\end{lstlisting}
+
+\subsection{Database Schema}
+
+\vspace{4pt}
+\begin{tabularx}{\linewidth}{L{2.4cm} L{5.4cm} X}
+\toprule
+\theadrow Table & Key Columns & Purpose \\
+\midrule
+\texttt{agents}      & agent\_id, hostname, username, ip, last\_seen        & Registered beaconing agents \\
+\rowcolor{bgsoft}
+\texttt{tasks}       & task\_id, agent\_id, task\_type, instruction, status  & Pending / sent / completed task queue \\
+\texttt{results}     & result\_id, task\_id, agent\_id, output               & Task output returned by agents \\
+\rowcolor{bgsoft}
+\texttt{hosts}       & ip, hostname, open\_ports, services                   & Recon-discovered hosts and port data \\
+\texttt{credentials} & username, secret, cred\_type, source\_host            & Harvested credentials (plaintext / NTLM) \\
+\rowcolor{bgsoft}
+\texttt{tunnels}     & agent\_id, interface, subnet, status                  & Active ligolo-ng pivot tunnels \\
+\bottomrule
+\end{tabularx}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 3. IMPLEMENTED MODULES
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Implemented Modules}
+
+\subsection{Agent (C\# .NET 10)}
+
+The agent is compiled as a self-contained, single-file Windows executable with no external dependencies. It beacons to the C2 server at a configurable interval (default 5 seconds), receives tasks, executes them, and posts results back.
+
+\begin{itemize}[leftmargin=16pt, itemsep=2pt]
+    \item Asynchronous beacon loop with task polling via \texttt{POST /checkin}
+    \item Shell command execution via \texttt{cmd.exe /c}
+    \item Tool download from \texttt{/files/} server endpoint to \texttt{\%TEMP\%}
+    \item File upload to server via \texttt{POST /upload} (multipart)
+    \item Self-reported IP, hostname, and username on each checkin
+\end{itemize}
+
+\subsection{Reconnaissance Module}
+
+The recon module performs fully asynchronous network scanning from the agent. It accepts a single IP or CIDR range, performs a parallel ping sweep, then scans common ports on all alive hosts. Results are returned as structured JSON and stored in the hosts table for use by downstream modules.
+
+\begin{itemize}[leftmargin=16pt, itemsep=2pt]
+    \item Parallel \textbf{ICMP ping sweep} with 1\,s timeout
+    \item Port scan of 14 common ports: 21, 22, 23, 25, 80, 135, 139, 443, 445, 3389, 5985, 5986, 8080, 8443
+    \item \textbf{Banner grabbing} on text-based protocols (HTTP, FTP, SMTP, SSH)
+    \item \textbf{Reverse DNS resolution} for hostname discovery
+    \item Results stored to \texttt{hosts} table and uploaded to loot as JSON
+    \item Operator CLI renders results as a formatted table (IP / Hostname / Port / Service / Banner)
+\end{itemize}
+
+\subsection{Post-Exploitation Tool Delivery}
+
+A generic tool-delivery model allows the operator to upload offensive tools to the server's \texttt{/files/} directory and execute them on agents on demand. Tools are downloaded to \texttt{\%TEMP\%}, executed, and any output files are automatically uploaded back.
+
+\begin{itemize}[leftmargin=16pt, itemsep=2pt]
+    \item \textbf{SharpHound} --- Active Directory enumeration; ZIP output auto-uploaded
+    \item \textbf{Certipy} --- ADCS certificate template enumeration; JSON/TXT output auto-uploaded
+    \item \textbf{Secretsdump / DPAPI} --- generic tool execution (Mimikatz, SharpDPAPI, etc.)
+\end{itemize}
+
+\subsection{Authentication \& Lateral Movement Module}
+
+The authentication module is the primary focus of the current development phase. It provides multiple modes of authenticated access to remote Windows hosts using only native Windows binaries --- no third-party tools required on the agent.
+
+\subsubsection{Supported Services}
+
+\vspace{4pt}
+\begin{tabularx}{\linewidth}{L{1.8cm} L{4cm} L{4.2cm} X}
+\toprule
+\theadrow Service & Protocol & Default Probe & Custom \texttt{-c} \\
+\midrule
+\textbf{WinRM} & HTTP/5985 via \texttt{winrs}    & \texttt{whoami \&\& hostname \&\& ipconfig} & Full stdout capture \\
+\rowcolor{bgsoft}
+\textbf{SMB}   & TCP/445 via \texttt{net use}    & IPC\$ connect + \texttt{net view}           & Not supported (auth only) \\
+\textbf{WMI}   & TCP/135 via \texttt{wmic}       & \texttt{process list brief}                 & \texttt{process call create} \\
+\bottomrule
+\end{tabularx}
+
+\subsubsection{Authentication Modes}
+
+\begin{itemize}[leftmargin=16pt, itemsep=3pt]
+    \item \textbf{Auto-sweep} --- queries recon DB for open lateral movement ports and tries all detected services sequentially, reporting success/failure per service
+    \item \textbf{Forced service} (\texttt{-s winrm|smb|wmi}) --- authenticate to a specific service only
+    \item \textbf{Custom command} (\texttt{-c <cmd>}) --- run any command on the remote host via WinRM; uses \texttt{shlex} parsing to handle multi-word commands with spaces
+    \item \textbf{Credential spray} (\texttt{spray <target>}) --- try all DB credentials against a target, output an access matrix
+    \item \textbf{Multi-target spray} (\texttt{--all}) --- one credential set against every host in the DB with lateral movement ports open
+    \item \textbf{Auto-store} --- successful authentication automatically persists the credential to the DB
+\end{itemize}
+
+\subsubsection{Operator CLI Examples}
+
+\begin{lstlisting}
+# Auto-sweep all services detected by recon
+authenticate -u administrator -p Password1 10.0.2.8
+
+# Force WinRM and run a custom command
+authenticate -u administrator -p Password1 -s winrm -c "net user /domain" 10.0.2.8
+
+# Spray all stored credentials against one target
+spray 10.0.2.8
+
+# One credential against all known hosts
+authenticate -u administrator -p Password1 --all
+\end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 4. OPERATOR CLI REFERENCE
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Operator CLI Reference}
+
+The operator CLI is an interactive REPL that communicates with the C2 server over HTTP. It operates in two modes: \textbf{global mode} for cross-agent operations, and \textbf{interact mode} scoped to a specific agent.
+
+\vspace{6pt}
+\begin{tabularx}{\linewidth}{L{3.6cm} X}
+\toprule
+\theadrow Command & Description \\
+\midrule
+\texttt{agents}              & List all registered agents with last seen timestamp \\
+\rowcolor{bgsoft}
+\texttt{hosts}               & List all recon-discovered hosts and open ports \\
+\texttt{credentials}         & List all harvested credentials from the DB \\
+\rowcolor{bgsoft}
+\texttt{loot}                & List files uploaded by agents (SharpHound ZIPs, etc.) \\
+\texttt{results <id>}        & Show all task results for a given agent \\
+\rowcolor{bgsoft}
+\texttt{interact <id>}       & Enter interact mode for a specific agent \\
+\midrule
+\multicolumn{2}{l}{\cellcolor{dark}\color{white}\bfseries\small\hspace{4pt}Interact mode commands} \\
+\midrule
+\texttt{recon <ip/cidr>}     & Queue a recon scan task \\
+\rowcolor{bgsoft}
+\texttt{shell <cmd>}         & Execute a shell command on the agent \\
+\texttt{sharphound}          & Download and run SharpHound, upload ZIP \\
+\rowcolor{bgsoft}
+\texttt{certipy <args>}      & Download and run Certipy, upload output \\
+\texttt{secretsdump <tool>}  & Download a tool and execute it \\
+\rowcolor{bgsoft}
+\texttt{authenticate ...}    & Authenticate to remote hosts (see Section 3.4) \\
+\texttt{spray <target>}      & Spray all DB credentials against a target \\
+\rowcolor{bgsoft}
+\texttt{results}             & Show task results for current agent \\
+\texttt{back}                & Return to global mode \\
+\bottomrule
+\end{tabularx}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 5. TESTING STATUS
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Testing Status}
+
+All modules have been tested in a controlled lab environment (VMware) with a Windows Active Directory domain (\texttt{ICCN.LOCAL}). The test topology includes a Windows Server 2019 Domain Controller and Windows 10 workstations.
+
+\vspace{6pt}
+\begin{tabularx}{\linewidth}{L{5cm} C{1.8cm} X}
+\toprule
+\theadrow Module / Feature & Status & Notes \\
+\midrule
+Agent beacon / checkin         & \pillbuilt    & Stable beaconing at 5\,s interval \\
+\rowcolor{bgsoft}
+Shell command execution        & \pillbuilt    & Full stdout/stderr capture \\
+Recon (ping + port scan)       & \pillbuilt    & Table display, stored to hosts DB \\
+\rowcolor{bgsoft}
+SharpHound integration         & \pillbuilt    & ZIP auto-uploaded to loot \\
+Certipy integration            & \pillbuilt    & Output files auto-uploaded \\
+\rowcolor{bgsoft}
+Secretsdump / DPAPI            & \pillbuilt    & Tested with Mimikatz \\
+Auth sweep (WinRM/SMB/WMI)    & \pillbuilt    & Correct service detection from recon \\
+\rowcolor{bgsoft}
+Custom command (\texttt{-c})  & \pillbuilt    & \texttt{shlex} fix applied for multi-word commands \\
+Auto-store credentials         & \pillbuilt    & Implemented, validated in lab \\
+\rowcolor{bgsoft}
+Credential spray (\texttt{spray}) & \pillbuilt & Implemented, to be validated \\
+Multi-target spray (\texttt{--all}) & \pillbuilt & Implemented, to be validated \\
+\rowcolor{bgsoft}
+n8n webhook notifications      & \pillbuilt    & New agent and task result events firing \\
+Pivot / tunnel management      & \pillbuilt    & Ligolo-ng register/remove tunnels \\
+\bottomrule
+\end{tabularx}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 6. UPCOMING WORK
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Upcoming Work}
+
+\begin{tcolorbox}[warnbox]
+The following features are planned for the next development session, ordered by priority. Items 1 and 2 are prerequisites for a clean Pass-the-Hash implementation.
+\end{tcolorbox}
+
+\vspace{6pt}
+
+\subsection{1 \quad Credential Storage Improvements}
+
+\textbf{Complexity:} \pilllow \quad \textbf{Scope:} Operator only
+
+\begin{itemize}[leftmargin=16pt, itemsep=2pt]
+    \item Review and fix known issues in the current credential store
+    \item Improve deduplication --- avoid storing the same \texttt{(username, secret)} pair multiple times
+    \item Add \texttt{cred\_type} field support for NTLM hashes (preparation for Pass-the-Hash)
+    \item Display improvements in the \texttt{credentials} command (mask secrets, show service tags)
+\end{itemize}
+
+\subsection{2 \quad Pass-the-Hash (PtH) Authentication}
+
+\textbf{Complexity:} \pillmedium \quad \textbf{Scope:} Operator + Agent
+
+\begin{itemize}[leftmargin=16pt, itemsep=2pt]
+    \item Add \texttt{-H <NTLM\_hash>} flag as an alternative to \texttt{-p <password>} in \texttt{authenticate}
+    \item Operator stores hash-based credentials with \texttt{cred\_type='ntlm'} in the DB
+    \item Agent downloads \texttt{Invoke-TheHash.ps1} (or equivalent) from \texttt{/files/} on demand
+    \item Enables full attack chain: secretsdump $\rightarrow$ harvest NTLM $\rightarrow$ PtH lateral move
+    \item Maps to \textbf{MITRE ATT\&CK T1550.002} (Use Alternate Authentication Material)
+\end{itemize}
+
+% ══════════════════════════════════════════════════════════════════════════════
+% 7. MITRE ATT&CK MAPPING
+% ══════════════════════════════════════════════════════════════════════════════
+\section{MITRE ATT\&CK Mapping}
+
+\vspace{4pt}
+\begin{tabularx}{\linewidth}{L{2.2cm} L{5.6cm} L{3.4cm} C{1.6cm}}
+\toprule
+\theadrow Technique & Name & Module & Status \\
+\midrule
+T1018        & Remote System Discovery                  & Recon module            & \pillbuilt \\
+\rowcolor{bgsoft}
+T1046        & Network Service Discovery                & Recon --- port scan      & \pillbuilt \\
+T1021.001    & Remote Services: WinRM                   & Auth module             & \pillbuilt \\
+\rowcolor{bgsoft}
+T1021.002    & Remote Services: SMB                     & Auth module             & \pillbuilt \\
+T1047        & Windows Management Instrumentation       & Auth module             & \pillbuilt \\
+\rowcolor{bgsoft}
+T1059.001    & Command \& Scripting: PowerShell          & Tool delivery           & \pillbuilt \\
+T1078        & Valid Accounts                           & Auth --- auto-store      & \pillbuilt \\
+\rowcolor{bgsoft}
+T1110.003    & Credential Stuffing                      & \texttt{spray / --all}  & \pillbuilt \\
+T1003        & OS Credential Dumping                    & Secretsdump / Mimikatz  & \pillbuilt \\
+\rowcolor{bgsoft}
+T1558        & Steal or Forge Kerberos Tickets          & Certipy / SharpHound    & \pillbuilt \\
+T1550.002    & Pass the Hash                            & PtH module              & \pillplanned \\
+\bottomrule
+\end{tabularx}
+
+\vspace{1cm}
+{\color{borderclr}\rule{\linewidth}{0.5pt}}
+\vspace{4pt}
+
+{\small\color{light} This document is intended for internal review only. All techniques described are performed in an isolated lab environment for research and academic purposes.}
+
+\end{document}
