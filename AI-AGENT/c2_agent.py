@@ -545,12 +545,19 @@ class C2Agent:
             memories=state.get("memories", ""),
             datetime=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ))
-        try:
-            response = self.llm_with_tools.invoke([system] + state["messages"])
-            return {"messages": [response]}
-        except Exception as e:
-            print(f"  [LLM error]: {e}")
-            return {"messages": [AIMessage(content=f"LLM error: {e}")]}
+        wait = 10
+        for attempt in range(5):
+            try:
+                response = self.llm_with_tools.invoke([system] + state["messages"])
+                return {"messages": [response]}
+            except Exception as e:
+                if "429" in str(e) and attempt < 4:
+                    print(f"  [LLM 429] rate limited — retrying in {wait}s ({attempt+1}/5)")
+                    time.sleep(wait)
+                    wait *= 2
+                else:
+                    print(f"  [LLM error]: {e}")
+                    return {"messages": [AIMessage(content=f"LLM error: {e}")]}
 
     def _route(self, state: C2AgentState):
         last = state["messages"][-1]
