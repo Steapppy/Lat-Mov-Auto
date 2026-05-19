@@ -703,7 +703,7 @@ class C2Agent:
         })
 
         self.llm = ChatMistralAI(
-            model="mistral-small-latest",
+            model=os.getenv("MISTRAL_MODEL", "open-mistral-7b"),
             api_key=os.getenv("MISTRAL_API_KEY"),
         )
         self.tools = [
