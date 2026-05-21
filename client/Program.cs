@@ -1088,6 +1088,7 @@ $groupEntry.CommitChanges()
                 ? $"$u = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$_d/$dn\", '{altUser}', '{altPass}', ({authType}))"
                 : $"$u = New-Object System.DirectoryServices.DirectoryEntry(\"LDAP://$_d/$dn\", $null, $null, ({authType}))";
             string script = $@"
+$ErrorActionPreference = 'Stop'
 {AdsiRoot(altUser, altPass)}
 $s = New-Object System.DirectoryServices.DirectorySearcher($root)
 $s.Filter = '(sAMAccountName={p[1]})'
@@ -1095,9 +1096,13 @@ $r = $s.FindOne()
 if (-not $r) {{ throw 'User {p[1]} not found' }}
 $dn = $r.Properties['distinguishedName'][0]
 {entryLine}
-$u.Invoke('SetPassword', '{p[2]}')
-$u.CommitChanges()
-'[+] Password changed for {p[1]}'
+try {{
+    $u.Invoke('SetPassword', '{p[2]}')
+    $u.CommitChanges()
+    '[+] Password changed for {p[1]}'
+}} catch {{
+    throw ""[error] SetPassword failed for {p[1]}: $($_.Exception.Message)""
+}}
 ";
             return RunPowerShell(script);
         }

@@ -753,6 +753,9 @@ RULES
 - ALWAYS call c2_analyze_sharphound() right after c2_run_sharphound() — this is mandatory.
 - ALWAYS cross-reference c2_get_credentials() with the analysis before Phase 4.
 - ALWAYS call c2_ask_human() before every ACL abuse or destructive action.
+- After c2_ask_human() returns: read the response carefully.
+  • If it is a QUESTION (contains "?") or does not clearly say yes/proceed/confirm/go/ok → DO NOT proceed with the action. Answer the question or address the concern first, then call c2_ask_human() again to get explicit confirmation.
+  • Only proceed with the action when the human's response is an unambiguous "yes", "proceed", "go", "confirm", "ok", or equivalent.
 - If a task fails or times out → skip it, continue to the next step.
 - Do NOT retry indefinitely.
 - The network map is auto-generated after c2_analyze_sharphound — do NOT call c2_generate_map during phases 1-3.
@@ -904,10 +907,14 @@ class C2Agent:
             "Now execute Phase 4 using the credentials and attack paths you just found.\n\n"
             "For EVERY local admin relationship where you have plaintext credentials:\n"
             "  1. Call c2_ask_human to confirm\n"
+            "     - If the answer is a question or is not clearly 'yes/proceed/confirm': answer it, then ask again.\n"
+            "     - Only continue to step 2 after receiving explicit confirmation.\n"
             "  2. c2_authenticate to verify access\n"
             "  3. c2_run_secretsdump on that machine\n\n"
             "For EVERY ACL attack path where you have credentials for the starting principal:\n"
             "  1. Call c2_ask_human before EACH step\n"
+            "     - If the answer is a question or is not clearly 'yes/proceed/confirm': answer it, then ask again.\n"
+            "     - Only continue to the aclabuse step after receiving explicit confirmation.\n"
             "  2. Execute each c2_aclabuse step in the chain\n\n"
             "If no matches: run c2_spray against each discovered host.\n"
             "Finish with c2_generate_map."
